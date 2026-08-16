@@ -17,6 +17,13 @@ const browserLoad = (): AppData => {
 
 const browserSave = (data: AppData) => localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 
+export interface ShortcutInfo {
+  name: string;
+  targetPath: string;
+  arguments: string | null;
+  workingDirectory: string | null;
+}
+
 export const platform = {
   isDesktop: isTauri,
   async loadData(): Promise<AppData> { return isTauri() ? invoke<AppData>("load_app_data") : browserLoad(); },
@@ -28,6 +35,15 @@ export const platform = {
     return data;
   },
   async pickPath(): Promise<string | null> { return isTauri() ? invoke<string | null>("pick_shortcut_path") : null; },
+  async resolveShortcut(path: string): Promise<ShortcutInfo> {
+    if (!isTauri()) return { name: path.split(/[\\/]/).pop()?.replace(/\.lnk$/i, "") ?? path, targetPath: path, arguments: null, workingDirectory: null };
+    return invoke<ShortcutInfo>("resolve_shortcut", { path });
+  },
+  async isDirectory(path: string): Promise<boolean> { return isTauri() ? invoke<boolean>("is_directory", { path }) : false; },
+  async getFileName(path: string): Promise<string> {
+    if (isTauri()) return invoke<string>("get_file_name", { path });
+    return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+  },
   async extractIcon(path: string): Promise<string | null> { return isTauri() ? invoke<string | null>("extract_icon", { path }) : null; },
   async launchPath(path: string): Promise<void> {
     if (!isTauri()) return;

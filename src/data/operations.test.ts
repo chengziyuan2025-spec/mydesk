@@ -3,14 +3,34 @@ import { createDefaultData } from "./defaults";
 import { applyOperation, migrateBrowserData } from "./operations";
 
 describe("DeskBox operations", () => {
-  it("migrates v1 shortcuts with usage metadata", () => {
+  it("migrates v1 active and trashed shortcuts to v3", () => {
     const legacy = createDefaultData() as unknown as Record<string, unknown>;
     legacy.version = 1;
     delete legacy.revision;
-    delete legacy.trash;
+    const active = (legacy.containers as Array<{ shortcuts: Array<Record<string, unknown>> }>)[0].shortcuts[0];
+    delete active.source;
+    delete active.arguments;
+    delete active.workingDirectory;
+    const trashed = { ...active, id: "trashed" };
+    legacy.trash = [
+      { kind: "shortcut", id: "trash-shortcut", deletedAt: 1, originalIndex: 0, originalContainerId: "sample-container", item: trashed },
+      { kind: "container", id: "trash-container", deletedAt: 1, originalIndex: 0, item: { id: "old", name: "Old", hidden: false, pinned: false, shortcuts: [{ ...active, id: "nested" }] } },
+    ];
     const migrated = migrateBrowserData(legacy);
-    expect(migrated.version).toBe(2);
-    expect(migrated.containers[0].shortcuts[0].launchCount).toBe(0);
+    expect(migrated.version).toBe(3);
+    expect(migrated.containers[0].shortcuts[0]).toMatchObject({ source: "manual", arguments: null, workingDirectory: null });
+    expect(migrated.trash[0].kind === "shortcut" && migrated.trash[0].item.source).toBe("manual");
+    expect(migrated.trash[1].kind === "container" && migrated.trash[1].item.shortcuts[0].workingDirectory).toBeNull();
+  });
+
+  it("migrates v2 shortcut metadata defaults", () => {
+    const legacy = createDefaultData() as unknown as Record<string, unknown>;
+    legacy.version = 2;
+    const shortcut = (legacy.containers as Array<{ shortcuts: Array<Record<string, unknown>> }>)[0].shortcuts[0];
+    delete shortcut.source;
+    delete shortcut.arguments;
+    delete shortcut.workingDirectory;
+    expect(migrateBrowserData(legacy).containers[0].shortcuts[0]).toMatchObject({ source: "manual", arguments: null, workingDirectory: null });
   });
 
   it("moves a shortcut before a stable anchor", () => {

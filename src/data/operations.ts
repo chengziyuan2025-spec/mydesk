@@ -1,5 +1,5 @@
 import { createId } from "./defaults";
-import type { AppData, AppOperation, ContainerItem } from "../types";
+import type { AppData, AppOperation, ContainerItem, ShortcutItem, TrashEntry } from "../types";
 
 const clone = (data: AppData): AppData => structuredClone(data);
 
@@ -104,16 +104,27 @@ export function applyOperation(current: AppData, operation: AppOperation): AppDa
 export function migrateBrowserData(value: unknown): AppData {
   if (!value || typeof value !== "object") throw new Error("无效数据");
   const raw = value as Record<string, unknown>;
-  if (Number(raw.version ?? 1) > 2) throw new Error("数据版本过高");
+  if (Number(raw.version ?? 1) > 3) throw new Error("数据版本过高");
   const data = structuredClone(value) as AppData;
-  data.version = 2;
+  data.version = 3;
   data.revision ??= 0;
   data.trash ??= [];
+
+  const migrateShortcut = (shortcut: ShortcutItem) => {
+    shortcut.source ??= "manual";
+    shortcut.arguments ??= null;
+    shortcut.workingDirectory ??= null;
+    shortcut.icon ??= null;
+    shortcut.createdAt ??= 0;
+    shortcut.launchCount ??= 0;
+    shortcut.lastLaunchedAt ??= null;
+  };
   for (const container of data.containers ?? []) {
-    for (const shortcut of container.shortcuts ?? []) {
-      shortcut.launchCount ??= 0;
-      shortcut.lastLaunchedAt ??= null;
-    }
+    for (const shortcut of container.shortcuts ?? []) migrateShortcut(shortcut);
+  }
+  for (const entry of data.trash as TrashEntry[]) {
+    if (entry.kind === "shortcut") migrateShortcut(entry.item);
+    else for (const shortcut of entry.item.shortcuts ?? []) migrateShortcut(shortcut);
   }
   return data;
 }

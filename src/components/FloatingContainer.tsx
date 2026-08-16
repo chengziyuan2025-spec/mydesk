@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Archive, GripVertical, Minus, Pencil, Plus, X } from "lucide-react";
+import { normalizeShortcutTarget, parseDroppedUrls, shortcutNameFromTarget, uniqueShortcutCandidates, type ShortcutCandidate } from "../data/externalDrop";
 import { useDeskBox } from "../hooks/useDeskBox";
 import type { AppData, ContainerItem, ShortcutItem } from "../types";
 import { platform } from "../services/platform";
@@ -11,7 +13,10 @@ import { IconButton } from "./IconButton";
 import { ShortcutTile } from "./ShortcutTile";
 import { ToastStack } from "./ToastStack";
 
-interface FloatingContainerProps { containerId: string }
+interface FloatingContainerProps {
+  containerId: string;
+  onBeforeAdd?: (candidate: ShortcutCandidate) => Promise<ShortcutCandidate | boolean | void>;
+}
 
 function SortableTile({ shortcut, container, data, onLaunch, onReveal, onDelete, onMove }: {
   shortcut: ShortcutItem; container: ContainerItem; data: AppData;
@@ -24,18 +29,158 @@ function SortableTile({ shortcut, container, data, onLaunch, onReveal, onDelete,
   </div>;
 }
 
-export function FloatingContainer({ containerId }: FloatingContainerProps) {
-  const { data, actions, saveState, toasts } = useDeskBox({ enableDesktopWatcher: false });
+export function FloatingContainer({ containerId, onBeforeAdd }: FloatingContainerProps) {
+  const { data, actions, saveState, toasts, notify } = useDeskBox({ enableDesktopWatcher: false });
   const [addingShortcut, setAddingShortcut] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [externalDragActive, setExternalDragActive] = useState(false);
   const activeContainerId = platform.currentContainerId() ?? containerId;
+  const container = data?.containers.find((item) => item.id === activeContainerId);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useEffect(() => { if (data) document.documentElement.dataset.theme = data.settings.theme; }, [data?.settings.theme]);
+
+  const addCandidates = useCallback(async (candidates: ShortcutCandidate[], preparationFailures = 0) => {
+    if (!container || (!candidates.length && !preparationFailures)) return;
+    const seen = new Set(container.shortcuts.map((item) => normalizeShortcutTarget(item.path)));
+    const uniqueCandidates = uniqueShortcutCandidates(candidates, seen);
+    let added = 0;
+    let duplicates = candidates.length - uniqueCandidates.length;
+    let skipped = 0;
+    let failed = preparationFailures;
+
+    for (const initialCandidate of uniqueCandidates) {
+      try {
+        let candidate = initialCandidate;
+        if (onBeforeAdd) {
+          const result = await onBeforeAdd(candidate);
+          if (result === false) {
+            skipped += 1;
+            continue;
+          }
+          if (result && typeof result === "object") candidate = result;
+        }
+        const key = normalizeShortcutTarget(candidate.path);
+        if (!key || seen.has(key)) {
+          duplicates += 1;
+          continue;
+        }
+        await actions.addShortcut(container.id, candidate.name, candidate.path, {
+          source: candidate.source,
+          arguments: candidate.arguments,
+          workingDirectory: candidate.workingDirectory,
+          notify: false,
+        });
+        seen.add(key);
+        added += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    const summary = [
+      added ? `已添加 ${added} 个` : "",
+      duplicates ? `跳过 ${duplicates} 个重复项` : "",
+      skipped ? `取消 ${skipped} 个` : "",
+      failed ? `${failed} 个添加失败` : "",
+    ].filter(Boolean).join("，");
+    notify(summary || "没有可添加的项目", failed ? "error" : added ? "success" : "info");
+  }, [actions, container, notify, onBeforeAdd]);
+
+  const candidatesFromPaths = useCallback(async (paths: string[]) => {
+    const candidates: ShortcutCandidate[] = [];
+    let failures = 0;
+    for (const droppedPath of paths) {
+      try {
+        if (/\.lnk$/i.test(droppedPath)) {
+          const info = await platform.resolveShortcut(droppedPath);
+          if (!info.targetPath) throw new Error("快捷方式没有目标路径");
+          candidates.push({
+            name: info.name,
+            path: info.targetPath,
+            source: "drag_drop",
+            arguments: info.arguments,
+            workingDirectory: info.workingDirectory,
+          });
+          continue;
+        }
+        const fileName = await platform.getFileName(droppedPath);
+        const directory = await platform.isDirectory(droppedPath);
+        candidates.push({
+          name: shortcutNameFromTarget(droppedPath, fileName, directory),
+          path: droppedPath,
+          source: "drag_drop",
+          arguments: null,
+          workingDirectory: null,
+        });
+      } catch {
+        failures += 1;
+      }
+    }
+    await addCandidates(candidates, failures);
+  }, [addCandidates]);
+
+  useEffect(() => {
+    if (!platform.isDesktop() || !container) return;
+    let disposed = false;
+    let unlisten: () => void = () => undefined;
+    void getCurrentWebview().onDragDropEvent((event) => {
+      const payload = event.payload;
+      if (payload.type === "enter" || payload.type === "over") setExternalDragActive(true);
+      else if (payload.type === "leave") setExternalDragActive(false);
+      else {
+        setExternalDragActive(false);
+        void candidatesFromPaths(payload.paths);
+      }
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; });
+    return () => { disposed = true; unlisten(); };
+  }, [candidatesFromPaths, container]);
+
+  useEffect(() => {
+    if (!container) return;
+    const hasFiles = (transfer: DataTransfer) => transfer.files.length > 0
+      || Array.from(transfer.items).some((item) => item.kind === "file");
+    const hasTextType = (transfer: DataTransfer) => Array.from(transfer.types).some((type) => type === "text/uri-list" || type === "text/plain");
+    const dragOver = (event: DragEvent) => {
+      if (!event.dataTransfer || hasFiles(event.dataTransfer) || !hasTextType(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setExternalDragActive(true);
+    };
+    const dragLeave = (event: DragEvent) => {
+      if (!event.relatedTarget) setExternalDragActive(false);
+    };
+    const drop = (event: DragEvent) => {
+      const transfer = event.dataTransfer;
+      if (!transfer || hasFiles(transfer) || !hasTextType(transfer)) return;
+      const urls = parseDroppedUrls(transfer.getData("text/uri-list"), transfer.getData("text/plain"));
+      if (!urls.length) {
+        setExternalDragActive(false);
+        return;
+      }
+      event.preventDefault();
+      setExternalDragActive(false);
+      void addCandidates(urls.map((url) => ({
+        name: shortcutNameFromTarget(url, "", false),
+        path: url,
+        source: "drag_drop",
+        arguments: null,
+        workingDirectory: null,
+      })));
+    };
+    window.addEventListener("dragover", dragOver);
+    window.addEventListener("dragleave", dragLeave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", dragOver);
+      window.removeEventListener("dragleave", dragLeave);
+      window.removeEventListener("drop", drop);
+    };
+  }, [addCandidates, container]);
+
   const startDragging = (event: React.MouseEvent<HTMLElement>) => { if (event.button === 0 && !(event.target as HTMLElement).closest("[data-window-control]")) void platform.startDragging(); };
   if (!data) return <main className="floating-shell floating-shell--loading"><span className="loading-mark"><i /><i /><i /></span></main>;
-  const container = data.containers.find((item) => item.id === activeContainerId);
   if (!container) return <main className="floating-shell floating-shell--empty"><Archive size={28} strokeWidth={1.45} /><p>这个容器已被移入回收站。</p></main>;
 
   const commitName = () => {
@@ -74,6 +219,7 @@ export function FloatingContainer({ containerId }: FloatingContainerProps) {
         {!container.shortcuts.length && <p className="floating-empty">还没有快捷方式</p>}
       </section>
       <footer className="floating-statusbar"><span>{saveState === "saving" ? "正在保存" : saveState === "error" ? "保存失败" : "置顶工作区"}</span><span>拖动图标排序</span></footer>
+      {externalDragActive && <div className="floating-drop-overlay" aria-hidden="true"><Plus size={24} /><strong>释放以添加</strong></div>}
       {addingShortcut && <AddShortcutModal containerName={container.name} onAdd={(name, path) => actions.addShortcut(container.id, name, path)} onClose={() => setAddingShortcut(false)} />}
       <ToastStack toasts={toasts} />
     </main>

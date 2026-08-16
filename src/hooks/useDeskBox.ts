@@ -9,6 +9,14 @@ const normalizedPath = (path: string) => path.replaceAll("/", "\\").toLocaleLowe
 
 interface DeskBoxOptions { enableDesktopWatcher?: boolean }
 
+export interface AddShortcutOptions {
+  source?: ShortcutItem["source"];
+  arguments?: string | null;
+  workingDirectory?: string | null;
+  icon?: string | null;
+  notify?: boolean;
+}
+
 export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {}) {
   const [data, setData] = useState<AppData | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -96,7 +104,7 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
       const fileName = path.split(/[\\/]/).pop() ?? path;
       const name = fileName.replace(/\.(lnk|exe)$/i, "");
       const icon = await platform.extractIcon(path).catch(() => null);
-      const shortcut: ShortcutItem = { id: createId("shortcut"), name, path, icon, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null };
+      const shortcut: ShortcutItem = { id: createId("shortcut"), name, path, source: "manual", arguments: null, workingDirectory: null, icon, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null };
       await runOperation({ type: "addShortcut", containerId: targetId, shortcut });
       notify(`已自动收纳「${name}」`, "success");
       if (current.settings.deleteSource) await platform.recycleSource(path).catch((error) => notify(`源文件保留：${errorText(error)}`, "error"));
@@ -136,11 +144,17 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
     setContainerHidden: (containerId: string, hidden: boolean) => runOperation({ type: "setContainerHidden", containerId, hidden }),
     reorderContainer: (containerId: string, beforeContainerId: string | null) => runOperation({ type: "reorderContainer", containerId, beforeContainerId }),
     moveShortcut: (shortcutId: string, targetContainerId: string, beforeShortcutId: string | null = null) => runOperation({ type: "moveShortcut", shortcutId, targetContainerId, beforeShortcutId }),
-    async addShortcut(containerId: string, name: string, path: string) {
-      const icon = await platform.extractIcon(path).catch(() => null);
-      const shortcut: ShortcutItem = { id: createId("shortcut"), name, path, icon, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null };
+    async addShortcut(containerId: string, name: string, path: string, options: AddShortcutOptions = {}) {
+      const icon = options.icon === undefined ? await platform.extractIcon(path).catch(() => null) : options.icon;
+      const shortcut: ShortcutItem = {
+        id: createId("shortcut"), name, path,
+        source: options.source ?? "manual",
+        arguments: options.arguments ?? null,
+        workingDirectory: options.workingDirectory ?? null,
+        icon, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null,
+      };
       await runOperation({ type: "addShortcut", containerId, shortcut });
-      notify(`「${name}」已添加`, "success");
+      if (options.notify !== false) notify(`「${name}」已添加`, "success");
     },
     updateSettings: (settings: Settings) => runOperation({ type: "updateSettings", settings }),
     restoreTrash: (trashId: string) => runOperation({ type: "restoreTrash", trashId }),

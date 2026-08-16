@@ -1,14 +1,15 @@
 # DeskBox 项目交接文档
 
 > 文档日期：2026-08-16
-> 当前版本：0.2.0
+> 当前版本：0.2.0（数据格式 v3）
 > 项目路径：`E:\vibecoding\hoverDesk`
+> 最新交接：优先阅读第 18 章“原生拖放实现与运行态修复”
 
 ## 1. 项目概况
 
 DeskBox 是一个面向 Windows 的桌面快捷方式收纳工具。应用使用 Tauri v2 提供窗口、托盘、全局快捷键、文件系统监听和本地文件操作，使用 React 18 + TypeScript 实现界面和业务状态。
 
-0.2.0 已完成快速启动、拖拽整理、持久回收站、单实例、数据迁移与备份。规则分类等增强功能尚未实现。
+0.2.0 已完成快速启动、应用内拖拽整理、Windows 原生文件拖入、持久回收站、单实例、数据迁移与备份。规则分类等增强功能尚未实现。
 
 ## 2. 技术栈与运行环境
 
@@ -53,6 +54,10 @@ DeskBox 是一个面向 Windows 的桌面快捷方式收纳工具。应用使用
 - 数据文件损坏时备份为 `deskbox-data.corrupt.json`，随后恢复默认数据。
 - 浏览器开发模式使用 `localStorage`，可脱离 Tauri 调试界面。
 - 主界面快捷方式搜索。
+- 所有独立悬浮容器支持从 Windows 资源管理器原生拖入 EXE、LNK、文件夹、普通文件和多选路径。
+- 悬浮容器通过 DOM 事件尽力接收浏览器地址栏拖出的 HTTP(S) URL；文件拖入只由 Tauri 原生事件处理，避免重复添加。
+- `.lnk` 使用 Windows `IShellLinkW + IPersistFile` 解析目标、参数和工作目录；启动时使用 `ShellExecuteW` 分别传递这些字段。
+- 外部拖入支持目标去重、逐项容错、结果汇总、无布局偏移的拖入覆盖提示和可选 `onBeforeAdd` 回调。
 
 ### 3.2 部分完成
 
@@ -128,7 +133,7 @@ storage / icons / watcher / Windows 系统能力
 
 ```ts
 interface AppData {
-  version: 2;
+  version: 3;
   revision: number;
   containers: ContainerItem[];
   settings: Settings;
@@ -147,6 +152,9 @@ interface ShortcutItem {
   id: string;
   name: string;
   path: string;
+  source: "drag_drop" | "manual";
+  arguments: string | null;
+  workingDirectory: string | null;
   icon: string | null; // 当前保存为 PNG data URI
   createdAt: number;
   launchCount: number;
@@ -185,6 +193,9 @@ Windows 数据位置：
 | `hide_container_window` | 前端 → Rust | 隐藏指定容器窗口 |
 | `pick_shortcut_path` | 前端 → Rust | 打开 Windows 文件选择框 |
 | `extract_icon` | 前端 → Rust | 提取并缓存关联图标，返回 data URI |
+| `resolve_shortcut` | 前端 → Rust | 通过 Windows Shell COM 解析 `.lnk` 的目标、参数和工作目录 |
+| `is_directory` | 前端 → Rust | 判断拖入的绝对路径是否为目录 |
+| `get_file_name` | 前端 → Rust | 获取拖入路径的末级完整文件名 |
 | `launch_path` | 前端 → Rust | 启动程序或打开路径 |
 | `reveal_in_explorer` | 前端 → Rust | 在文件管理器中定位目标 |
 | `configure_desktop_watcher` | 前端 → Rust | 启用或停止桌面监听 |
@@ -253,6 +264,9 @@ npm install
 - 移除窗口四周 12px 透明空隙后重新构建：通过。
 - 多窗口架构：`npm run check`、`cargo clippy -- -D warnings` 通过。
 - Playwright：主页容器概览、悬浮工作区、添加快捷方式弹层和容器重命名流程通过。
+- 原生拖放改动：`npm run check` 通过，当前包含 9 个 Vitest 测试和 12 个 Rust 测试。
+- Rust 临时创建真实 `.lnk` 后成功解析目标、参数和工作目录。
+- Windows 原生窗口自动化验证：工作区“1”首次打开成功；最小化后再次点击卡片可恢复为可见且非最小化状态。
 
 Playwright 临时产物位于 `output/playwright`，该目录已被 `.gitignore` 忽略。
 
@@ -284,7 +298,7 @@ Playwright 临时产物位于 `output/playwright`，该目录已被 `.gitignore`
 
 ### 10.7 自动化测试
 
-当前没有提交单元测试或端到端测试文件，验证主要通过编译、Clippy、Playwright CLI 和 Windows 实机操作完成。业务继续扩展前，应优先为数据操作、路径去重、默认容器切换和桌面事件分类增加测试。
+仓库已有 Vitest 与 Rust 单元测试，覆盖数据操作、v1/v2→v3 迁移、回收站嵌套快捷方式迁移、URL 解析、外部路径命名和去重、命令输入校验以及 `.lnk` 解析。原生 OLE 拖放仍需要 Windows 真实鼠标手工验收，浏览器地址栏 URL 拖入受 WebView2 数据转交行为限制，只能作为尽力功能。
 
 ### 10.8 多窗口保存冲突（已在 0.2.0 解决）
 
@@ -392,7 +406,7 @@ cargo run --manifest-path src-tauri/Cargo.toml
 
 ## 14. 交接结论
 
-当前 0.2.0 已具备长期使用所需的核心闭环：主页管理、快速启动、独立置顶容器窗口、拖拽整理、持久回收站、自动监听桌面、原子数据写入、迁移备份、设置和托盘驻留。后续仍应保持组件只负责展示，把规则和系统能力放入独立数据模块或 Rust 模块。
+当前 0.2.0 已具备长期使用所需的核心闭环：主页管理、快速启动、独立置顶容器窗口、应用内拖拽整理、Windows 原生文件拖入、持久回收站、自动监听桌面、原子数据写入、迁移备份、设置和托盘驻留。后续仍应保持组件只负责展示，把规则和系统能力放入独立数据模块或 Rust 模块。
 
 ## 15. 2026-08-16 多窗口架构交接
 
@@ -496,3 +510,71 @@ npm run tauri dev
 - 浏览器模式的导入功能不打开本地文件选择框，完整导入导出能力只在 Tauri 桌面环境可用。
 - 快速启动当前没有拼音索引，也不执行任意系统命令。
 - 后续修改数据字段时必须同时更新 Rust 模型、Rust 迁移器、`src/types.ts`、浏览器默认数据和对应测试。
+
+## 18. 2026-08-16 原生拖放实现与运行态修复（当前最新）
+
+> 本章记录本次对话完成的工作，并覆盖前文关于数据 v2、没有单元测试及悬浮窗显示行为的旧描述。
+
+### 18.1 用户目标与完成范围
+
+- 仅独立悬浮容器窗口接受外部拖入；主页和快速启动窗口不启用这一交互。
+- 支持从 Windows 资源管理器拖入 `.exe`、`.lnk`、文件夹、普通文件和多选路径。
+- 支持从浏览器地址栏尽力拖入 HTTP(S) URL；WebView2 不把文本交给 DOM 时不会生效，这是平台限制。
+- 同一容器按规范化目标路径去重；同一批拖入中的重复项也会跳过。
+- 每个路径独立处理，单项失败不会阻断其余项目；完成后汇总添加、重复、取消和失败数量。
+- `FloatingContainer` 暴露可选异步 `onBeforeAdd(candidate)`，默认直接添加，为后续确认对话框预留接口。
+
+### 18.2 前端实现
+
+- `src/components/FloatingContainer.tsx` 使用 `getCurrentWebview().onDragDropEvent()`，按当前 Tauri API 的 `enter / over / drop / leave` payload 处理原生路径，组件卸载时注销监听。
+- 未使用 React `onDrop/onDragOver` 处理文件。窗口级 DOM `dragover/drop` 只处理 `text/uri-list` 或 `text/plain` 的 HTTP(S) URL；发现 `dataTransfer.files` 或 file item 时立即忽略。
+- `src/data/externalDrop.ts` 集中实现 URL 校验/提取、显示名规则、目标规范化和去重；`externalDrop.test.ts` 覆盖这些纯函数。
+- 路径命名规则：文件夹使用末级目录名；EXE 去扩展名；普通文件保留完整文件名；LNK 显示链接文件名；URL 使用完整 URL。
+- `useDeskBox.actions.addShortcut` 新增兼容式 options 参数，支持 `source`、`arguments`、`workingDirectory`、预取图标和关闭单项通知；原有添加弹窗调用无需修改。
+
+### 18.3 Rust 与 Windows 实现
+
+- `container_windows.rs` 对动态容器 Builder 设置 `.visible(true)`，并在 Windows 设置 `.drag_and_drop(true)`。保存的尺寸和位置在 `build()` 前写入 Builder，避免窗口创建后跳动。
+- 已存在窗口重新打开时执行 `unminimize() + show() + set_focus()`；新建窗口在注册事件后也显式 `show()`。此补丁已用 Windows UI Automation 验证最小化恢复。
+- 新命令 `resolve_shortcut`、`is_directory`、`get_file_name` 已在 `lib.rs` 注册，并在 `platform.ts` 提供类型化封装。
+- `.lnk` 使用 `IShellLinkW + IPersistFile` 无界面解析。COM 初始化兼容线程已初始化和 `RPC_E_CHANGED_MODE` 情况，只在本调用成功初始化时执行 `CoUninitialize()`。
+- Windows 启动改用 `ShellExecuteW`，目标、参数和工作目录分开传递，保留开始菜单快捷方式的启动语义。
+- `Cargo.toml` 的 `windows` crate 已启用 `Win32_Storage_FileSystem`、`Win32_System_Com`、`Win32_UI_Shell` 和 `Win32_UI_WindowsAndMessaging`。
+
+### 18.4 数据 v3 与迁移
+
+- `ShortcutItem` 新增 `source: "drag_drop" | "manual"`、`arguments` 和 `workingDirectory`；Rust 字段对应 `ShortcutSource`、`arguments`、`working_directory`。
+- 当前 `AppData.version` / `CURRENT_DATA_VERSION` 为 3。
+- Rust 存储与浏览器存储均支持旧数据升级；活动快捷方式、回收站快捷方式以及回收站容器内的嵌套快捷方式统一补 `source: manual`，启动元数据补 `null`。
+- 默认数据、手动添加和桌面自动收纳标记为 `manual`；本次外部文件与 URL 拖入标记为 `drag_drop`。
+- 开发机真实数据 `%APPDATA%\com.deskbox.app\deskbox-data.json` 已迁移到 v3，迁移后容器和原快捷方式均保留。
+
+### 18.5 Capability 兼容性决定
+
+- `capabilities/default.json` 的窗口范围包含 `main`、`container-*` 和 `quick-launch`，并保留 `core:event:default`。
+- 不要添加计划中提到的 `core:webview:allow-drag-drop-event`：本项目实际解析到的 Rust Tauri 2.11 schema 不定义该 permission，添加后构建会直接失败。
+- 当前版本的 `onDragDropEvent()` 在现有 `core:event:default` 下已能注册；外部文件接收由动态窗口的 `.drag_and_drop(true)` 控制。
+
+### 18.6 本次故障根因
+
+- 用户曾观察到工作区“1”不显示、向“示例”拖文件夹提示添加失败。
+- 当时新版 Vite 前端仍连接旧的 `src-tauri/target/debug/deskbox.exe`。旧 Rust 进程没有注册 `is_directory/get_file_name/resolve_shortcut`，所以前端拖入路径识别全部失败。
+- 已终止旧进程并通过 Tauri dev 启动 `src-tauri/target/dragdrop-dev/debug/deskbox.exe`。不要同时运行多个不同 target 目录的 DeskBox 调试进程。
+- 窗口“1”当时实际已创建但处于隐藏状态；恢复后保持可见。随后又补充并验证了最小化窗口的 `unminimize()` 恢复路径。
+- 如果未来再次出现“前端有拖入提示但添加全部失败”，第一步检查运行中的 `deskbox.exe` 路径和启动时间，而不是先修改前端拖放代码。
+
+### 18.7 验证结果
+
+- `npm run check`：通过；3 个 Vitest 文件共 9 个测试通过，TypeScript/Vite 生产构建通过，Cargo check 通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml`：12 个 Rust 测试通过，其中包含真实临时 `.lnk` 创建和解析。
+- `git diff --check`：通过，仅有 Git 的 LF→CRLF 工作区提示，无空白错误。
+- Playwright 已验证外部拖入辅助函数和 URL drop 备用流程的界面行为。
+- Windows UI Automation 已验证点击工作区“1”会创建并显示 `DeskBox - 1`；将其最小化后再次点击卡片，窗口从 `minimized=true` 恢复为 `false`。
+
+### 18.8 下一次对话的首要事项
+
+1. 先运行 `git status` 和 `git log -1`，确认本章对应提交已经存在，不要重复实现原生拖放。
+2. 需要调试桌面功能时只运行一个 `npm run tauri dev`，并确认进程来自当前仓库预期 target 目录。
+3. 用真实鼠标分别拖入文件夹、TXT/PDF/JPG、多选文件、EXE、传统 LNK 和开始菜单 LNK，检查覆盖提示、单次添加、图标和双击启动。
+4. Chrome/Edge 地址栏 URL 拖入只做尽力验收；失败时记录 WebView2 是否提供 DOM 文本，不要改成依赖 HTML5 文件拖放。
+5. 如需发布，继续执行 `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 和安装包实机测试；本次已执行 `npm run check` 与 Rust 测试，但未生成发布安装包。

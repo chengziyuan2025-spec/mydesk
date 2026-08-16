@@ -1,4 +1,7 @@
-use crate::{models::{AppData, CURRENT_DATA_VERSION}, AppError};
+use crate::{
+    models::{AppData, CURRENT_DATA_VERSION},
+    AppError,
+};
 use chrono::Local;
 use serde_json::{json, Value};
 use std::{
@@ -8,7 +11,10 @@ use std::{
 
 pub fn data_path(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|error| AppError::Message(error.to_string()))?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| AppError::Message(error.to_string()))?;
     fs::create_dir_all(&dir)?;
     Ok(dir.join("deskbox-data.json"))
 }
@@ -21,7 +27,11 @@ pub fn backup_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
 
 pub fn icon_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     use tauri::Manager;
-    let dir = app.path().app_cache_dir().map_err(|error| AppError::Message(error.to_string()))?.join("icons");
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| AppError::Message(error.to_string()))?
+        .join("icons");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -34,11 +44,61 @@ fn backup_file(path: &Path, label: &str) -> Result<Option<PathBuf>, AppError> {
     if !path.exists() {
         return Ok(None);
     }
-    let directory = path.parent().unwrap_or_else(|| Path::new(".")).join("backups");
+    let directory = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("backups");
     fs::create_dir_all(&directory)?;
     let target = directory.join(format!("{label}-{}.json", timestamp()));
     fs::copy(path, &target)?;
     Ok(Some(target))
+}
+
+fn visit_container_shortcuts(
+    container: &mut Value,
+    visit: &mut dyn FnMut(&mut serde_json::Map<String, Value>),
+) {
+    if let Some(shortcuts) = container.get_mut("shortcuts").and_then(Value::as_array_mut) {
+        for shortcut in shortcuts {
+            if let Some(shortcut) = shortcut.as_object_mut() {
+                visit(shortcut);
+            }
+        }
+    }
+}
+
+fn visit_all_shortcuts(
+    value: &mut Value,
+    visit: &mut dyn FnMut(&mut serde_json::Map<String, Value>),
+) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(containers) = object.get_mut("containers").and_then(Value::as_array_mut) {
+        for container in containers {
+            visit_container_shortcuts(container, visit);
+        }
+    }
+    if let Some(trash) = object.get_mut("trash").and_then(Value::as_array_mut) {
+        for entry in trash {
+            let Some(entry) = entry.as_object_mut() else {
+                continue;
+            };
+            match entry.get("kind").and_then(Value::as_str) {
+                Some("shortcut") => {
+                    if let Some(item) = entry.get_mut("item").and_then(Value::as_object_mut) {
+                        visit(item);
+                    }
+                }
+                Some("container") => {
+                    if let Some(item) = entry.get_mut("item") {
+                        visit_container_shortcuts(item, visit);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 fn migrate_value(mut value: Value) -> Result<(Value, bool), AppError> {
@@ -50,22 +110,31 @@ fn migrate_value(mut value: Value) -> Result<(Value, bool), AppError> {
     }
     let mut migrated = false;
     if version < 2 {
-        let object = value.as_object_mut().ok_or_else(|| AppError::Message("数据根节点必须是对象".to_string()))?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| AppError::Message("数据根节点必须是对象".to_string()))?;
         object.insert("version".to_string(), json!(2));
         object.entry("revision".to_string()).or_insert(json!(0));
         object.entry("trash".to_string()).or_insert(json!([]));
-        if let Some(containers) = object.get_mut("containers").and_then(Value::as_array_mut) {
-            for container in containers {
-                if let Some(shortcuts) = container.get_mut("shortcuts").and_then(Value::as_array_mut) {
-                    for shortcut in shortcuts {
-                        if let Some(item) = shortcut.as_object_mut() {
-                            item.entry("launchCount".to_string()).or_insert(json!(0));
-                            item.entry("lastLaunchedAt".to_string()).or_insert(Value::Null);
-                        }
-                    }
-                }
-            }
-        }
+        visit_all_shortcuts(&mut value, &mut |item| {
+            item.entry("launchCount".to_string()).or_insert(json!(0));
+            item.entry("lastLaunchedAt".to_string())
+                .or_insert(Value::Null);
+        });
+        migrated = true;
+    }
+    if version < 3 {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| AppError::Message("数据根节点必须是对象".to_string()))?;
+        object.insert("version".to_string(), json!(3));
+
+        visit_all_shortcuts(&mut value, &mut |item| {
+            item.entry("source".to_string()).or_insert(json!("manual"));
+            item.entry("arguments".to_string()).or_insert(Value::Null);
+            item.entry("workingDirectory".to_string())
+                .or_insert(Value::Null);
+        });
         migrated = true;
     }
     Ok((value, migrated))
@@ -94,7 +163,9 @@ pub fn load(path: &Path) -> Result<AppData, AppError> {
             Ok(data)
         }
         Ok((data, false)) => Ok(data),
-        Err(AppError::Message(message)) if message.contains("高于当前支持") => Err(AppError::Message(message)),
+        Err(AppError::Message(message)) if message.contains("高于当前支持") => {
+            Err(AppError::Message(message))
+        }
         Err(error) => {
             let directory = path.parent().unwrap_or_else(|| Path::new("."));
             let backup = directory.join(format!("deskbox-data-corrupt-{}.json", timestamp()));
@@ -124,18 +195,22 @@ pub fn ensure_daily_backup(path: &Path) -> Result<(), AppError> {
     if !path.exists() {
         return Ok(());
     }
-    let directory = path.parent().unwrap_or_else(|| Path::new(".")).join("backups");
+    let directory = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("backups");
     fs::create_dir_all(&directory)?;
     let prefix = format!("daily-{}", Local::now().format("%Y%m%d"));
-    let already_exists = fs::read_dir(&directory)?.flatten().any(|entry| {
-        entry.file_name().to_string_lossy().starts_with(&prefix)
-    });
+    let already_exists = fs::read_dir(&directory)?
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(&prefix));
     if !already_exists {
         let target = directory.join(format!("{prefix}-{}.json", Local::now().format("%H%M%S")));
         fs::copy(path, target)?;
     }
 
-    let mut daily: Vec<_> = fs::read_dir(&directory)?.flatten()
+    let mut daily: Vec<_> = fs::read_dir(&directory)?
+        .flatten()
         .filter(|entry| entry.file_name().to_string_lossy().starts_with("daily-"))
         .collect();
     daily.sort_by_key(|entry| entry.file_name());
@@ -159,8 +234,54 @@ mod tests {
         let raw = r#"{"version":1,"containers":[],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":""}}"#;
         let (data, migrated) = parse_and_migrate(raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 2);
+        assert_eq!(data.version, 3);
         assert_eq!(data.revision, 0);
+    }
+
+    #[test]
+    fn migrates_shortcuts_in_active_and_trash_containers() {
+        let shortcut = r#"{"id":"shortcut","name":"App","path":"C:\\\\app.exe","icon":null,"createdAt":1,"launchCount":0,"lastLaunchedAt":null}"#;
+        let raw = format!(
+            r#"{{"version":2,"revision":4,"containers":[{{"id":"active","name":"Active","hidden":false,"pinned":false,"shortcuts":[{shortcut}]}}],"settings":{{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":"active"}},"trash":[{{"kind":"shortcut","id":"trash-shortcut","deleted_at":1,"original_container_id":"active","original_index":0,"item":{shortcut}}},{{"kind":"container","id":"trash-container","deleted_at":2,"original_index":0,"item":{{"id":"deleted","name":"Deleted","hidden":false,"pinned":false,"shortcuts":[{shortcut}]}}}}]}}"#
+        );
+
+        let (data, migrated) = parse_and_migrate(&raw).unwrap();
+        assert!(migrated);
+        assert_eq!(data.version, 3);
+        assert_eq!(
+            data.containers[0].shortcuts[0].source,
+            crate::models::ShortcutSource::Manual
+        );
+        assert_eq!(data.containers[0].shortcuts[0].arguments, None);
+        assert_eq!(data.containers[0].shortcuts[0].working_directory, None);
+        for entry in &data.trash {
+            match entry {
+                crate::models::TrashEntry::Shortcut { item, .. } => {
+                    assert_eq!(item.source, crate::models::ShortcutSource::Manual);
+                    assert_eq!(item.arguments, None);
+                    assert_eq!(item.working_directory, None);
+                }
+                crate::models::TrashEntry::Container { item, .. } => {
+                    assert_eq!(
+                        item.shortcuts[0].source,
+                        crate::models::ShortcutSource::Manual
+                    );
+                    assert_eq!(item.shortcuts[0].arguments, None);
+                    assert_eq!(item.shortcuts[0].working_directory, None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn version_three_missing_optional_fields_uses_defaults() {
+        let raw = r#"{"version":3,"revision":0,"containers":[{"id":"active","name":"Active","hidden":false,"pinned":false,"shortcuts":[{"id":"shortcut","name":"App","path":"C:\\app.exe","icon":null,"createdAt":1,"launchCount":0,"lastLaunchedAt":null}]}],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":"active"},"trash":[]}"#;
+        let (data, migrated) = parse_and_migrate(raw).unwrap();
+        assert!(!migrated);
+        let shortcut = &data.containers[0].shortcuts[0];
+        assert_eq!(shortcut.source, crate::models::ShortcutSource::Manual);
+        assert_eq!(shortcut.arguments, None);
+        assert_eq!(shortcut.working_directory, None);
     }
 
     #[test]

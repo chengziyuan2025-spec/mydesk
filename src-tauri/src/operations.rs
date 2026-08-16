@@ -40,51 +40,111 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
             if name.is_empty() {
                 return Err(AppError::Message("容器名称不能为空".to_string()));
             }
-            let container = data.containers.iter_mut().find(|item| item.id == container_id)
+            let container = data
+                .containers
+                .iter_mut()
+                .find(|item| item.id == container_id)
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             container.name = name.to_string();
         }
-        AppOperation::SetContainerHidden { container_id, hidden } => {
-            let container = data.containers.iter_mut().find(|item| item.id == container_id)
+        AppOperation::SetContainerHidden {
+            container_id,
+            hidden,
+        } => {
+            let container = data
+                .containers
+                .iter_mut()
+                .find(|item| item.id == container_id)
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             container.hidden = hidden;
         }
-        AppOperation::DeleteContainer { container_id, trash_id, deleted_at } => {
-            let index = data.containers.iter().position(|item| item.id == container_id)
+        AppOperation::DeleteContainer {
+            container_id,
+            trash_id,
+            deleted_at,
+        } => {
+            let index = data
+                .containers
+                .iter()
+                .position(|item| item.id == container_id)
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             let item = data.containers.remove(index);
-            data.trash.push(TrashEntry::Container { id: trash_id, deleted_at, original_index: index, item });
+            data.trash.push(TrashEntry::Container {
+                id: trash_id,
+                deleted_at,
+                original_index: index,
+                item,
+            });
             if data.settings.default_container_id == container_id {
-                data.settings.default_container_id = data.containers.first().map(|item| item.id.clone()).unwrap_or_default();
+                data.settings.default_container_id = data
+                    .containers
+                    .first()
+                    .map(|item| item.id.clone())
+                    .unwrap_or_default();
             }
         }
-        AppOperation::ReorderContainer { container_id, before_container_id } => {
-            let source = data.containers.iter().position(|item| item.id == container_id)
+        AppOperation::ReorderContainer {
+            container_id,
+            before_container_id,
+        } => {
+            let source = data
+                .containers
+                .iter()
+                .position(|item| item.id == container_id)
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             let item = data.containers.remove(source);
             let target = before_container_id
-                .and_then(|id| data.containers.iter().position(|candidate| candidate.id == id))
+                .and_then(|id| {
+                    data.containers
+                        .iter()
+                        .position(|candidate| candidate.id == id)
+                })
                 .unwrap_or(data.containers.len());
             data.containers.insert(target, item);
         }
-        AppOperation::AddShortcut { container_id, shortcut } => {
-            if data.containers.iter().flat_map(|item| &item.shortcuts).any(|item| item.id == shortcut.id) {
+        AppOperation::AddShortcut {
+            container_id,
+            shortcut,
+        } => {
+            if data
+                .containers
+                .iter()
+                .flat_map(|item| &item.shortcuts)
+                .any(|item| item.id == shortcut.id)
+            {
                 return Err(AppError::Message("快捷方式 ID 已存在".to_string()));
             }
-            let container = data.containers.iter_mut().find(|item| item.id == container_id)
+            let container = data
+                .containers
+                .iter_mut()
+                .find(|item| item.id == container_id)
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             container.shortcuts.push(shortcut);
         }
         AppOperation::UpdateShortcutIcon { shortcut_id, icon } => {
-            let shortcut = data.containers.iter_mut().flat_map(|item| &mut item.shortcuts)
+            let shortcut = data
+                .containers
+                .iter_mut()
+                .flat_map(|item| &mut item.shortcuts)
                 .find(|item| item.id == shortcut_id)
                 .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
             shortcut.icon = Some(icon);
         }
-        AppOperation::DeleteShortcut { container_id, shortcut_id, trash_id, deleted_at } => {
-            let container = data.containers.iter_mut().find(|item| item.id == container_id)
+        AppOperation::DeleteShortcut {
+            container_id,
+            shortcut_id,
+            trash_id,
+            deleted_at,
+        } => {
+            let container = data
+                .containers
+                .iter_mut()
+                .find(|item| item.id == container_id)
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
-            let index = container.shortcuts.iter().position(|item| item.id == shortcut_id)
+            let index = container
+                .shortcuts
+                .iter()
+                .position(|item| item.id == shortcut_id)
                 .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
             let item = container.shortcuts.remove(index);
             data.trash.push(TrashEntry::Shortcut {
@@ -95,16 +155,27 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
                 item,
             });
         }
-        AppOperation::MoveShortcut { shortcut_id, target_container_id, before_shortcut_id } => {
+        AppOperation::MoveShortcut {
+            shortcut_id,
+            target_container_id,
+            before_shortcut_id,
+        } => {
             let mut moved = None;
             for container in &mut data.containers {
-                if let Some(index) = container.shortcuts.iter().position(|item| item.id == shortcut_id) {
+                if let Some(index) = container
+                    .shortcuts
+                    .iter()
+                    .position(|item| item.id == shortcut_id)
+                {
                     moved = Some(container.shortcuts.remove(index));
                     break;
                 }
             }
             let moved = moved.ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
-            let target = data.containers.iter_mut().find(|item| item.id == target_container_id)
+            let target = data
+                .containers
+                .iter_mut()
+                .find(|item| item.id == target_container_id)
                 .ok_or_else(|| AppError::Message("目标容器不存在".to_string()))?;
             let index = before_shortcut_id
                 .and_then(|id| target.shortcuts.iter().position(|item| item.id == id))
@@ -113,10 +184,17 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
         }
         AppOperation::UpdateSettings { settings } => data.settings = settings,
         AppOperation::RestoreTrash { trash_id } => {
-            let index = data.trash.iter().position(|item| item.id() == trash_id)
+            let index = data
+                .trash
+                .iter()
+                .position(|item| item.id() == trash_id)
                 .ok_or_else(|| AppError::Message("回收站项目不存在".to_string()))?;
             match data.trash.remove(index) {
-                TrashEntry::Container { original_index, mut item, .. } => {
+                TrashEntry::Container {
+                    original_index,
+                    mut item,
+                    ..
+                } => {
                     item.id = unique_container_id(data, &item.id);
                     unique_shortcut_ids(&mut item, data.revision);
                     let target = original_index.min(data.containers.len());
@@ -125,19 +203,35 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
                     }
                     data.containers.insert(target, item);
                 }
-                TrashEntry::Shortcut { original_container_id, original_index, item, .. } => {
-                    let target_index = if let Some(index) = data.containers.iter().position(|container| container.id == original_container_id) {
-                        index
-                    } else if let Some(index) = data.containers.iter().position(|container| container.id == data.settings.default_container_id) {
-                        index
-                    } else {
-                        let id = unique_container_id(data, "restored-container");
-                        data.containers.push(ContainerItem {
-                            id: id.clone(), name: "已恢复".to_string(), hidden: false, pinned: false, shortcuts: Vec::new(),
-                        });
-                        data.settings.default_container_id = id;
-                        data.containers.len() - 1
-                    };
+                TrashEntry::Shortcut {
+                    original_container_id,
+                    original_index,
+                    item,
+                    ..
+                } => {
+                    let target_index =
+                        if let Some(index) = data
+                            .containers
+                            .iter()
+                            .position(|container| container.id == original_container_id)
+                        {
+                            index
+                        } else if let Some(index) = data.containers.iter().position(|container| {
+                            container.id == data.settings.default_container_id
+                        }) {
+                            index
+                        } else {
+                            let id = unique_container_id(data, "restored-container");
+                            data.containers.push(ContainerItem {
+                                id: id.clone(),
+                                name: "已恢复".to_string(),
+                                hidden: false,
+                                pinned: false,
+                                shortcuts: Vec::new(),
+                            });
+                            data.settings.default_container_id = id;
+                            data.containers.len() - 1
+                        };
                     let container = &mut data.containers[target_index];
                     let target = original_index.min(container.shortcuts.len());
                     container.shortcuts.insert(target, item);
@@ -165,11 +259,24 @@ mod tests {
     fn deletes_and_restores_shortcut() {
         let mut data = AppData::default();
         let shortcut_id = data.containers[0].shortcuts[0].id.clone();
-        apply(&mut data, AppOperation::DeleteShortcut {
-            container_id: "sample-container".into(), shortcut_id, trash_id: "trash-1".into(), deleted_at: 1,
-        }).unwrap();
+        apply(
+            &mut data,
+            AppOperation::DeleteShortcut {
+                container_id: "sample-container".into(),
+                shortcut_id,
+                trash_id: "trash-1".into(),
+                deleted_at: 1,
+            },
+        )
+        .unwrap();
         assert_eq!(data.trash.len(), 1);
-        apply(&mut data, AppOperation::RestoreTrash { trash_id: "trash-1".into() }).unwrap();
+        apply(
+            &mut data,
+            AppOperation::RestoreTrash {
+                trash_id: "trash-1".into(),
+            },
+        )
+        .unwrap();
         assert_eq!(data.containers[0].shortcuts.len(), 2);
         assert!(data.trash.is_empty());
     }
@@ -179,9 +286,15 @@ mod tests {
         let mut data = AppData::default();
         let first = data.containers[0].shortcuts[0].id.clone();
         let second = data.containers[0].shortcuts[1].id.clone();
-        apply(&mut data, AppOperation::MoveShortcut {
-            shortcut_id: second.clone(), target_container_id: "sample-container".into(), before_shortcut_id: Some(first),
-        }).unwrap();
+        apply(
+            &mut data,
+            AppOperation::MoveShortcut {
+                shortcut_id: second.clone(),
+                target_container_id: "sample-container".into(),
+                before_shortcut_id: Some(first),
+            },
+        )
+        .unwrap();
         assert_eq!(data.containers[0].shortcuts[0].id, second);
     }
 }

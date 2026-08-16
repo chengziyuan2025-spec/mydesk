@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_DATA_VERSION: u32 = 2;
+pub const CURRENT_DATA_VERSION: u32 = 3;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutSource {
+    #[default]
+    Manual,
+    DragDrop,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -11,9 +19,24 @@ pub struct ShortcutItem {
     pub icon: Option<String>,
     pub created_at: u64,
     #[serde(default)]
+    pub source: ShortcutSource,
+    #[serde(default)]
+    pub arguments: Option<String>,
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    #[serde(default)]
     pub launch_count: u64,
     #[serde(default)]
     pub last_launched_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutInfo {
+    pub name: String,
+    pub target_path: String,
+    pub arguments: Option<String>,
+    pub working_directory: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -74,15 +97,40 @@ pub struct AppData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum AppOperation {
-    AddContainer { container: ContainerItem },
-    RenameContainer { container_id: String, name: String },
-    SetContainerHidden { container_id: String, hidden: bool },
-    DeleteContainer { container_id: String, trash_id: String, deleted_at: u64 },
-    ReorderContainer { container_id: String, before_container_id: Option<String> },
-    AddShortcut { container_id: String, shortcut: ShortcutItem },
-    UpdateShortcutIcon { shortcut_id: String, icon: String },
+    AddContainer {
+        container: ContainerItem,
+    },
+    RenameContainer {
+        container_id: String,
+        name: String,
+    },
+    SetContainerHidden {
+        container_id: String,
+        hidden: bool,
+    },
+    DeleteContainer {
+        container_id: String,
+        trash_id: String,
+        deleted_at: u64,
+    },
+    ReorderContainer {
+        container_id: String,
+        before_container_id: Option<String>,
+    },
+    AddShortcut {
+        container_id: String,
+        shortcut: ShortcutItem,
+    },
+    UpdateShortcutIcon {
+        shortcut_id: String,
+        icon: String,
+    },
     DeleteShortcut {
         container_id: String,
         shortcut_id: String,
@@ -94,9 +142,15 @@ pub enum AppOperation {
         target_container_id: String,
         before_shortcut_id: Option<String>,
     },
-    UpdateSettings { settings: Settings },
-    RestoreTrash { trash_id: String },
-    PermanentDeleteTrash { trash_id: String },
+    UpdateSettings {
+        settings: Settings,
+    },
+    RestoreTrash {
+        trash_id: String,
+    },
+    PermanentDeleteTrash {
+        trash_id: String,
+    },
     EmptyTrash,
 }
 
@@ -121,6 +175,9 @@ impl Default for AppData {
                         path: format!("{}\\calc.exe", system32),
                         icon: None,
                         created_at: 0,
+                        source: ShortcutSource::Manual,
+                        arguments: None,
+                        working_directory: None,
                         launch_count: 0,
                         last_launched_at: None,
                     },
@@ -130,6 +187,9 @@ impl Default for AppData {
                         path: format!("{}\\notepad.exe", system32),
                         icon: None,
                         created_at: 0,
+                        source: ShortcutSource::Manual,
+                        arguments: None,
+                        working_directory: None,
                         launch_count: 0,
                         last_launched_at: None,
                     },
@@ -143,5 +203,22 @@ impl Default for AppData {
             },
             trash: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shortcut_source_uses_persisted_wire_values() {
+        assert_eq!(
+            serde_json::to_string(&ShortcutSource::Manual).unwrap(),
+            "\"manual\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ShortcutSource::DragDrop).unwrap(),
+            "\"drag_drop\""
+        );
     }
 }

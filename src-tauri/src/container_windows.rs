@@ -1,7 +1,7 @@
 use crate::{models::AppData, storage, AppError};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
 const WINDOW_LABEL_PREFIX: &str = "container-";
 const DEFAULT_WIDTH: f64 = 420.0;
@@ -56,8 +56,12 @@ fn save_state(app: &AppHandle, state: &ContainerWindowState) -> Result<(), AppEr
 
 fn save_geometry(app: &AppHandle, container_id: &str, window: &WebviewWindow) {
     let result = (|| -> Result<(), AppError> {
-        let position = window.outer_position().map_err(|error| AppError::Message(error.to_string()))?;
-        let size = window.inner_size().map_err(|error| AppError::Message(error.to_string()))?;
+        let position = window
+            .outer_position()
+            .map_err(|error| AppError::Message(error.to_string()))?;
+        let size = window
+            .inner_size()
+            .map_err(|error| AppError::Message(error.to_string()))?;
         let mut state = load_state(app)?;
         state.windows.insert(
             container_id.to_string(),
@@ -101,38 +105,47 @@ pub async fn create_or_show(app: AppHandle, container_id: String) -> Result<(), 
     let label = label_for(&container_id);
 
     if let Some(window) = app.get_webview_window(&label) {
-        window.show().map_err(|error| AppError::Message(error.to_string()))?;
-        window.set_focus().map_err(|error| AppError::Message(error.to_string()))?;
+        window
+            .unminimize()
+            .map_err(|error| AppError::Message(error.to_string()))?;
+        window
+            .show()
+            .map_err(|error| AppError::Message(error.to_string()))?;
+        window
+            .set_focus()
+            .map_err(|error| AppError::Message(error.to_string()))?;
         return Ok(());
     }
 
     let saved_geometry = load_state(&app)?.windows.get(&container_id).cloned();
     let (default_x, default_y) = default_position(&app);
-    let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+    let (x, y, width, height) = saved_geometry
+        .map(|geometry| {
+            (
+                geometry.x as f64,
+                geometry.y as f64,
+                geometry.width as f64,
+                geometry.height as f64,
+            )
+        })
+        .unwrap_or((default_x, default_y, DEFAULT_WIDTH, DEFAULT_HEIGHT));
+    let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
         .title(format!("DeskBox - {}", container.name))
         .decorations(false)
         .transparent(true)
         .always_on_top(true)
         .resizable(true)
         .min_inner_size(280.0, 220.0)
-        .inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
-        .position(140.0, 120.0)
-        .visible(false)
+        .inner_size(width, height)
+        .position(x, y)
+        .visible(true);
+
+    #[cfg(windows)]
+    let builder = builder.drag_and_drop(true);
+
+    let window = builder
         .build()
         .map_err(|error| AppError::Message(error.to_string()))?;
-
-    if let Some(geometry) = saved_geometry {
-        window
-            .set_size(PhysicalSize::new(geometry.width, geometry.height))
-            .map_err(|error| AppError::Message(error.to_string()))?;
-        window
-            .set_position(PhysicalPosition::new(geometry.x, geometry.y))
-            .map_err(|error| AppError::Message(error.to_string()))?;
-    } else {
-        window
-            .set_position(PhysicalPosition::new(default_x as i32, default_y as i32))
-            .map_err(|error| AppError::Message(error.to_string()))?;
-    }
 
     let app_for_events = app.clone();
     let container_id_for_events = container_id.clone();
@@ -143,27 +156,43 @@ pub async fn create_or_show(app: AppHandle, container_id: String) -> Result<(), 
             let _ = window_for_events.hide();
         }
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-            save_geometry(&app_for_events, &container_id_for_events, &window_for_events);
+            save_geometry(
+                &app_for_events,
+                &container_id_for_events,
+                &window_for_events,
+            );
         }
         _ => {}
     });
 
-    window.show().map_err(|error| AppError::Message(error.to_string()))?;
-    window.set_focus().map_err(|error| AppError::Message(error.to_string()))?;
+    window
+        .show()
+        .map_err(|error| AppError::Message(error.to_string()))?;
+    window
+        .set_focus()
+        .map_err(|error| AppError::Message(error.to_string()))?;
     Ok(())
 }
 
 pub fn hide(app: &AppHandle, container_id: &str) -> Result<(), AppError> {
     if let Some(window) = app.get_webview_window(&label_for(container_id)) {
-        window.hide().map_err(|error| AppError::Message(error.to_string()))?;
+        window
+            .hide()
+            .map_err(|error| AppError::Message(error.to_string()))?;
     }
     Ok(())
 }
 
 pub fn close_missing(app: &AppHandle, data: &AppData) {
     for (label, window) in app.webview_windows() {
-        let Some(container_id) = label.strip_prefix(WINDOW_LABEL_PREFIX) else { continue };
-        if !data.containers.iter().any(|container| container.id == container_id) {
+        let Some(container_id) = label.strip_prefix(WINDOW_LABEL_PREFIX) else {
+            continue;
+        };
+        if !data
+            .containers
+            .iter()
+            .any(|container| container.id == container_id)
+        {
             let _ = window.destroy();
         }
     }

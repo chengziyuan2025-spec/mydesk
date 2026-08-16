@@ -4,6 +4,9 @@ export interface ShortcutItem {
   id: string;
   name: string;
   path: string;
+  source: "drag_drop" | "manual";
+  arguments: string | null;
+  workingDirectory: string | null;
   icon: string | null;
   createdAt: number;
   launchCount: number;
@@ -45,7 +48,7 @@ export interface ContainerTrashEntry extends TrashBase {
 export type TrashEntry = ShortcutTrashEntry | ContainerTrashEntry;
 
 export interface AppData {
-  version: 2;
+  version: 3;
   revision: number;
   containers: ContainerItem[];
   settings: Settings;
