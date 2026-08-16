@@ -106,7 +106,7 @@ hoverDesk/
 ```text
 主页窗口 / 容器悬浮窗口
    ↓
-useDeskBox（本地状态、自动保存、通知、跨窗口刷新）
+useDeskBox（乐观状态、原子操作、通知、跨窗口刷新）
    ↓
 platform.ts（Tauri/浏览器适配、窗口 API）
    ↓ invoke / event
@@ -117,9 +117,9 @@ storage / icons / watcher / Windows 系统能力
 
 重要原则：
 
-- 容器、快捷方式和设置的最终状态由前端维护，Rust 的 `deskbox-data.json` 是跨窗口共享的持久化数据源。
-- Rust 负责系统能力和 JSON 文件读写，不维护第二份长期业务状态。
-- `save_app_data` 成功后广播 `app-data-changed`；每个窗口收到事件后重新读取数据，避免各窗口长时间持有旧数据。
+- Rust 的 `deskbox-data.json` 是权威业务状态；前端先乐观应用操作，再以 Rust 返回的最新 revision 校准。
+- 所有业务写入通过 `apply_app_operation` 在 Rust 互斥锁内读取、修改、备份和保存，不再由各窗口整包覆盖数据。
+- 原子操作完成后广播带 revision 的 `app-data-changed`；其他窗口只在事件版本更新时重新读取。
 - 动态窗口的真实生命周期由 Rust 管理；前端 `appWindowStore` 只避免同一渲染器重复请求。
 - 桌面监听器只发送 `desktop-file-created` 事件；归类、去重和保存由前端完成。
 - 浏览器模式不会启动本地程序或访问文件系统，仅用于界面调试。
@@ -392,7 +392,7 @@ cargo run --manifest-path src-tauri/Cargo.toml
 
 ## 14. 交接结论
 
-当前 0.1.0 已具备可运行的核心闭环：主页管理、独立置顶容器窗口、容器重命名、快捷方式启动与管理、自动监听桌面、图标缓存、数据恢复、设置和托盘驻留。下一阶段不建议继续在 `App.tsx` 中堆积业务逻辑，应保持组件只负责展示，把新增规则、排序和迁移逻辑放入独立 hooks/services 或 Rust 模块中。
+当前 0.2.0 已具备长期使用所需的核心闭环：主页管理、快速启动、独立置顶容器窗口、拖拽整理、持久回收站、自动监听桌面、原子数据写入、迁移备份、设置和托盘驻留。后续仍应保持组件只负责展示，把规则和系统能力放入独立数据模块或 Rust 模块。
 
 ## 15. 2026-08-16 多窗口架构交接
 
@@ -417,7 +417,7 @@ cargo run --manifest-path src-tauri/Cargo.toml
 - 业务数据仍使用原有 `deskbox-data.json`，没有迁移到 `tauri-plugin-store`，避免影响已有用户数据和 Rust 的恢复、图标、监听逻辑。
 - `deskbox-container-windows.json` 仅保存每个容器窗口的物理坐标和客户区尺寸。
 - 每次移动或调整大小都会更新布局文件；损坏布局文件会被忽略，窗口使用默认偏左居中位置。
-- 任何窗口自动保存成功后，Rust 发送 `app-data-changed`。其他窗口由 `useDeskBox` 重新读取完整数据，刷新名称、快捷方式和设置。
+- 任何窗口的 `AppOperation` 原子提交成功后，Rust 发送带 revision 的 `app-data-changed`。其他窗口由 `useDeskBox` 按版本重新读取数据。
 - 悬浮窗口禁用了桌面监听器，只有主页启动监听，避免多窗口重复收纳同一文件。
 
 ### 当前开发进程
@@ -438,3 +438,61 @@ npm run tauri dev
 - 设置新增数据导出、导入和备份目录；每日首次修改前创建备份并保留最近 7 份。
 - 已验证 `npm run test` 5 项前端测试、Rust 4 项测试、生产构建、Clippy 零警告、单实例和原生全局快捷键。
 - Playwright 截图位于 `output/playwright/core-home.png`、`core-manage.png`、`core-trash.png` 和 `core-quick-launch.png`。
+
+## 17. 2026-08-16 本次对话最终交接（最新）
+
+> 本章优先级高于前面关于 0.1.0、整包保存和“尚未实现”的历史描述。
+
+### 本次对话做了什么
+
+1. 先阅读本文件并完成产品评估，确定 DeskBox 的核心价值是“快速启动 + 自动整理 + 场景化悬浮工作区”。
+2. 按核心 1.0 方案完成实现：v2 数据层、单实例、`Alt+Space` 启动器、主页整理视图、拖拽排序/跨容器移动、持久回收站、数据备份导入导出。
+3. 修复拖拽界面的嵌套交互控件问题：快捷方式使用独立拖拽把手，启动按钮保持单独的可访问控件。
+4. 更新 README 和本交接文档，并创建 Git 仓库、提交和推送到 GitHub。
+
+### 当前版本与 Git 状态
+
+- 应用版本：`0.2.0`。
+- 远端：`https://github.com/chengziyuan2025-spec/mydesk.git`。
+- 分支：`main`。
+- 核心实现提交：`936db27 feat: release DeskBox 0.2.0`。
+- 本地 Git 用户：`chengziyuan2025-spec <chengziyuan2025-spec@users.noreply.github.com>`。
+- `.gitignore` 已排除 `node_modules/`、`dist/`、`src-tauri/target/`、`.playwright-cli/`、`output/playwright/` 和日志。
+- 最新文档修改需要继续提交并推送；不要重新初始化仓库或覆盖 `main` 历史。
+
+### 已实现的代码边界
+
+- Rust 数据和系统能力：`src-tauri/src/models.rs`、`operations.rs`、`storage.rs`、`commands.rs`、`lib.rs`。
+- 前端状态与平台适配：`src/types.ts`、`src/data/operations.ts`、`src/data/search.ts`、`src/hooks/useDeskBox.ts`、`src/services/platform.ts`。
+- 主界面：`src/App.tsx`、`ManageView.tsx`、`QuickLauncher.tsx`、`TrashPanel.tsx`、`SearchResults.tsx`。
+- 所有业务修改使用 `AppOperation`：Rust 端在互斥锁中执行，前端浏览器模式使用同语义的本地执行器。
+- `save_app_data` 已不再作为常规业务入口；不要重新引入窗口整包覆盖。
+
+### 数据与运行时行为
+
+- `AppData.version` 固定为 2，包含 `revision`、`trash`；快捷方式包含 `launchCount` 和 `lastLaunchedAt`。
+- v1 数据首次加载时自动迁移，迁移前写入 `%APPDATA%\\com.deskbox.app\\backups\\migration-*.json`；未来版本数据拒绝加载，不覆盖原文件。
+- 每个本地日首次修改前创建 `daily-*.json`，保留最近 7 份。导入前会备份当前数据。
+- 删除容器或快捷方式进入应用回收站；快捷方式恢复优先回原容器和原位置，原容器不存在时进入默认容器，必要时创建“已恢复”。
+- 快速启动窗口标签为 `quick-launch`，固定 680x460，置顶、不进任务栏，失焦或 `Esc` 隐藏。
+- 快速启动允许已有快捷方式/容器、HTTP(S)、Windows 绝对路径和 UNC 路径；不允许任意协议、PowerShell 或系统命令。
+- `Alt+Space` 已在 Windows 实机注册成功；主页“快速启动”按钮是快捷键不可用时的备用入口。
+- 第二个 `deskbox.exe` 实例会退出并唤醒已有主窗口；已实测进程数保持为 1。
+
+### 已执行验证
+
+- `npm run check`：通过；包含 5 个 Vitest 测试、TypeScript 检查、Vite 生产构建和 Cargo check。
+- `cargo test --manifest-path src-tauri/Cargo.toml`：4 个测试通过。
+- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：零警告。
+- Playwright 浏览器模式：搜索直接启动结果、概览/整理切换、真实指针拖拽快捷方式跨容器、容器排序、右键移动、回收站删除/恢复均已验证。
+- Windows 原生：v1→v2 迁移备份、`Alt+Space` 唤起、第二实例保护均已验证。
+- 当前开发服务通常是 Vite `127.0.0.1:1420` 加 `cargo run --manifest-path src-tauri/Cargo.toml`；如果会话结束，按原交接中的启动命令重启。
+
+### 已知限制与下一步
+
+- 桌面监听器目前仍主要处理 Create，Rename/Move 事件兼容和对应测试尚未补齐。
+- 开机自启动、规则自动分类、场景切换、悬浮窗透明度/鼠标穿透/边缘吸附仍未实现。
+- 正式发布前仍需收紧 `tauri.conf.json` 的 `csp: null`，复核 capability 权限，并完成安装包测试。
+- 浏览器模式的导入功能不打开本地文件选择框，完整导入导出能力只在 Tauri 桌面环境可用。
+- 快速启动当前没有拼音索引，也不执行任意系统命令。
+- 后续修改数据字段时必须同时更新 Rust 模型、Rust 迁移器、`src/types.ts`、浏览器默认数据和对应测试。
