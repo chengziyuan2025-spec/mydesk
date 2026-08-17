@@ -1,6 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_DATA_VERSION: u32 = 3;
+pub const CURRENT_DATA_VERSION: u32 = 4;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchTargetType {
+    #[default]
+    Path,
+    Url,
+    ShellApp,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -16,6 +25,14 @@ pub struct ShortcutItem {
     pub id: String,
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub target_type: LaunchTargetType,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub source_path: Option<String>,
     pub icon: Option<String>,
     pub created_at: u64,
     #[serde(default)]
@@ -46,7 +63,44 @@ pub struct ContainerItem {
     pub name: String,
     pub hidden: bool,
     pub pinned: bool,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub open_count: u64,
+    #[serde(default)]
+    pub last_opened_at: Option<u64>,
+    #[serde(default)]
+    pub hotkey: Option<String>,
     pub shortcuts: Vec<ShortcutItem>,
+}
+
+fn default_main_hotkey() -> Option<String> { Some("Ctrl+Shift+H".to_string()) }
+fn default_quick_hotkey() -> Option<String> { Some("Alt+Space".to_string()) }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalHotkeys {
+    #[serde(default = "default_main_hotkey")]
+    pub main_window: Option<String>,
+    #[serde(default = "default_quick_hotkey")]
+    pub quick_launch: Option<String>,
+    #[serde(default)]
+    pub toggle_containers: Option<String>,
+}
+
+impl Default for GlobalHotkeys {
+    fn default() -> Self { Self { main_window: default_main_hotkey(), quick_launch: default_quick_hotkey(), toggle_containers: None } }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EverythingSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub executable_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -56,6 +110,30 @@ pub struct Settings {
     pub auto_collect: bool,
     pub delete_source: bool,
     pub default_container_id: String,
+    #[serde(default)]
+    pub hotkeys: GlobalHotkeys,
+    #[serde(default)]
+    pub everything: EverythingSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalLauncherEntry {
+    pub key: String,
+    pub kind: String,
+    pub name: String,
+    pub target_type: LaunchTargetType,
+    pub target: String,
+    pub source_path: Option<String>,
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub launch_count: u64,
+    #[serde(default)]
+    pub last_launched_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,6 +171,8 @@ pub struct AppData {
     pub containers: Vec<ContainerItem>,
     pub settings: Settings,
     #[serde(default)]
+    pub external_launcher_entries: Vec<ExternalLauncherEntry>,
+    #[serde(default)]
     pub trash: Vec<TrashEntry>,
 }
 
@@ -114,6 +194,10 @@ pub enum AppOperation {
         container_id: String,
         hidden: bool,
     },
+    SetContainerPinned {
+        container_id: String,
+        pinned: bool,
+    },
     DeleteContainer {
         container_id: String,
         trash_id: String,
@@ -131,6 +215,11 @@ pub enum AppOperation {
         shortcut_id: String,
         icon: String,
     },
+    SetShortcutLauncherMeta { shortcut_id: String, aliases: Vec<String>, favorite: bool },
+    SetContainerLauncherMeta { container_id: String, aliases: Vec<String>, favorite: bool },
+    RecordContainerOpened { container_id: String, opened_at: u64 },
+    UpsertExternalLauncherEntry { entry: ExternalLauncherEntry },
+    RemoveExternalLauncherEntry { key: String },
     DeleteShortcut {
         container_id: String,
         shortcut_id: String,
@@ -168,11 +257,20 @@ impl Default for AppData {
                 name: "示例".to_string(),
                 hidden: false,
                 pinned: false,
+                aliases: Vec::new(),
+                favorite: false,
+                open_count: 0,
+                last_opened_at: None,
+                hotkey: None,
                 shortcuts: vec![
                     ShortcutItem {
                         id: "sample-calculator".to_string(),
                         name: "计算器".to_string(),
                         path: format!("{}\\calc.exe", system32),
+                        target_type: LaunchTargetType::Path,
+                        aliases: Vec::new(),
+                        favorite: false,
+                        source_path: None,
                         icon: None,
                         created_at: 0,
                         source: ShortcutSource::Manual,
@@ -185,6 +283,10 @@ impl Default for AppData {
                         id: "sample-notepad".to_string(),
                         name: "记事本".to_string(),
                         path: format!("{}\\notepad.exe", system32),
+                        target_type: LaunchTargetType::Path,
+                        aliases: Vec::new(),
+                        favorite: false,
+                        source_path: None,
                         icon: None,
                         created_at: 0,
                         source: ShortcutSource::Manual,
@@ -200,7 +302,10 @@ impl Default for AppData {
                 auto_collect: true,
                 delete_source: false,
                 default_container_id: container_id,
+                hotkeys: GlobalHotkeys::default(),
+                everything: EverythingSettings::default(),
             },
+            external_launcher_entries: Vec::new(),
             trash: Vec::new(),
         }
     }

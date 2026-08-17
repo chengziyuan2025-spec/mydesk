@@ -1,9 +1,9 @@
 # DeskBox 项目交接文档
 
 > 文档日期：2026-08-16
-> 当前版本：0.2.0（数据格式 v3）
+> 当前版本：0.3.0（数据格式 v4）
 > 项目路径：`E:\vibecoding\hoverDesk`
-> 最新交接：优先阅读第 18 章“原生拖放实现与运行态修复”
+> 最新交接：优先阅读第 20 章“DeskBox 0.3.0 快捷键与统一快速启动”
 
 ## 1. 项目概况
 
@@ -578,3 +578,86 @@ npm run tauri dev
 3. 用真实鼠标分别拖入文件夹、TXT/PDF/JPG、多选文件、EXE、传统 LNK 和开始菜单 LNK，检查覆盖提示、单次添加、图标和双击启动。
 4. Chrome/Edge 地址栏 URL 拖入只做尽力验收；失败时记录 WebView2 是否提供 DOM 文本，不要改成依赖 HTML5 文件拖放。
 5. 如需发布，继续执行 `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 和安装包实机测试；本次已执行 `npm run check` 与 Rust 测试，但未生成发布安装包。
+
+## 19. 2026-08-16 强化悬浮工作区与桌面源文件隐藏（本次对话最新）
+
+### 19.1 悬浮工作区增强
+
+- `ContainerItem.pinned` 已落实为真实置顶行为：新增 `setContainerPinned` 业务操作，并通过 `set_container_window_pinned` 同步原生窗口。
+- `deskbox-container-windows.json` 扩展并保持旧格式兼容，保存窗口位置、尺寸、显示器键、折叠、锁定、透明度、鼠标穿透、吸附边缘、自动隐藏、布局、任务栏和虚拟桌面配置。
+- `src/components/FloatingContainer.tsx` 标题栏新增置顶、折叠、设置和“隐藏全部源文件”按钮。
+- 工作区设置支持紧凑/网格/列表布局、锁定位置尺寸、透明度、鼠标穿透、吸附边缘、贴边自动隐藏、任务栏和虚拟桌面选项，并允许编辑 X/Y/宽/高。
+- 主页面工具栏支持一键显示/隐藏全部已创建容器，并提供恢复悬浮窗鼠标交互按钮。
+- 鼠标穿透恢复方式：主页面按钮、托盘菜单“恢复悬浮窗鼠标交互”、全局快捷键 `Ctrl+Shift+M`。
+
+### 19.2 本次运行态问题修复
+
+- 修复锁定位置时跳回旧位置：获取窗口设置时会先读取当前原生窗口实时位置和尺寸，再提交锁定变更。
+- 修复透明度换算错误：Win32 `SetLayeredWindowAttributes` 需要 `0..255`，现在会把 UI 百分比正确转换；最低透明度调整为 60%，100% 为完全不透明。
+- 修复工作区无法点击/拖动：根因是该窗口布局文件中的 `clickThrough: true`；已通过 `Ctrl+Shift+M` 恢复当前开发机所有窗口交互，并将“学校”工作区状态保存为 `clickThrough: false`。
+- 吸附逻辑现在只在用户选择了具体边缘时生效，不会在 `snapEdge: none` 时强制吸附。
+
+### 19.3 桌面源文件隐藏
+
+- `ShortcutItem` 新增可选 `sourcePath`，旧 v3 数据缺失时自动按 `null` 处理；`.lnk` 拖入会保存桌面原始 `.lnk` 路径，而快捷方式目标仍保存到 `path`。
+- 添加快捷方式弹窗新增“添加后隐藏桌面源文件”复选框。
+- 快捷方式右键菜单将隐藏/恢复合并为一个状态操作：源文件可见时显示“隐藏源文件”，隐藏后改为“恢复源文件显示”。支持文件、文件夹、EXE、LNK 等。
+- 悬浮窗标题栏将批量隐藏/恢复合并为一个状态按钮，在“隐藏全部源文件”和“恢复全部源文件显示”之间切换，批量命令跳过 HTTP(S)，单个失败不会阻断其他项目。
+- Windows 使用 `GetFileAttributesW + SetFileAttributesW` 同时设置 Hidden + System 属性，并通过 `SHChangeNotify` 主动刷新资源管理器；恢复时同时清除这两个属性。该操作不删除文件、不移动文件；若用户关闭 Windows 的“隐藏受保护的操作系统文件”，系统仍会按用户设置显示淡色项目，属性方案无法覆盖该系统选项。
+
+### 19.4 新增命令/平台封装
+
+- `get_container_window_settings`
+- `update_container_window_settings`
+- `show_all_container_windows`
+- `hide_all_container_windows`
+- `list_monitors`
+- `set_container_window_pinned`
+- `restore_container_mouse_interaction`
+- `hide_path`
+- `show_path`
+- `toggle_path_hidden`
+- `get_path_hidden`
+- `hide_paths`
+- `show_paths`
+
+前端封装位于 `src/services/platform.ts`，窗口实现主要位于 `src-tauri/src/container_windows.rs`，文件属性命令位于 `src-tauri/src/commands.rs`。
+
+### 19.5 验证与启动注意事项
+
+- 当前最终验证：Vitest 16 个测试通过，Rust 18 个有效测试通过（Everything 实机集成测试按设计忽略），`npm run build`、`cargo check`、`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 和 `git diff --check` 均通过。
+- 当前开发版依赖 Vite `127.0.0.1:1420`。如果窗口显示 `ERR_CONNECTION_REFUSED`，先启动 `npm run dev`，再重启 DeskBox；推荐直接使用 `npm run tauri dev`，不要只启动 debug exe。
+- 直接运行 `src-tauri/target/debug/deskbox.exe` 时必须保证 Vite 已在 1420 端口监听，否则窗口会停留在连接错误或加载页。
+- 本次曾遇到旧窗口停在“正在整理桌面盒子…”：原因是旧 DeskBox 进程与 Vite 服务生命周期不同步。处理方式是确认 1420 返回 200，结束项目目录下旧 `deskbox.exe`，再启动单一新进程。
+- 当前开发机最近一次运行进程为 `E:\vibecoding\hoverDesk\src-tauri\target\debug\deskbox.exe`；不要同时运行 `target\dragdrop-dev` 和 `target\debug` 下的多个 DeskBox。
+
+## 20. 2026-08-16 DeskBox 0.3.0 快捷键与统一快速启动
+
+### 20.1 数据与搜索
+
+- 数据格式升级为 v4；快捷方式新增 `targetType`、`aliases`、`favorite`，容器新增别名、收藏、打开统计和独立热键。
+- 设置新增主窗口、快速启动、全部容器快捷键及 Everything 授权配置；v1-v3、活动项目和回收站嵌套项目均会补齐默认值。
+- 快速启动使用标准拼音全拼/首字母、自定义别名、收藏、最近和频率统一排序；隐藏容器也可按名称直接打开。
+- 外部启动记录最多保留 100 个普通历史项，收藏和带别名项目不自动清理。
+- 搜索结果支持移动 DeskBox 快捷方式、加入容器、定位和移入应用回收站；系统应用和 Everything 文件永不提供磁盘删除。
+
+### 20.2 可配置全局快捷键
+
+- 后端运行时维护快捷键到动作的映射，支持主窗口、快速启动、显示/隐藏全部非隐藏容器和每个容器的独立打开键。
+- 默认保留 `Ctrl+Shift+H`、`Alt+Space` 和固定恢复键 `Ctrl+Shift+M`；新增绑定默认留空。
+- 修改绑定时先注册新键，成功保存后才注销旧键。格式错误、DeskBox 内重复或被其他程序占用均不会破坏旧绑定。
+- “显示全部”现在会创建尚未打开过的非隐藏容器窗口；任一容器可见时同一动作会隐藏全部。
+
+### 20.3 Windows 应用与 Everything
+
+- Rust 缓存用户/公共开始菜单 `.lnk` 和固定 `Get-StartApps` 系统目录输出，区分绝对路径与受控 AppsFolder 标识。
+- Everything 默认关闭。用户在设置中启用后，DeskBox 只从检测或显式选择的 `Everything.exe` 启动程序。
+- 文件搜索直接使用官方 Unicode Query2 `WM_COPYDATA` IPC，默认超时 2 秒，不依赖 `es.exe`、SDK DLL 或命令行搜索。
+- Everything 查询文本仅作为 IPC 搜索数据；直接启动仍只接受 HTTP(S)、存在的绝对/UNC 路径或后端目录验证过的系统应用标识。
+
+### 20.4 计算与验证
+
+- 受限 mathjs AST 只允许数字、白名单运算符和单位，不开放函数、赋值或代码执行；Enter 复制计算结果。
+- 前端当前有 16 个 Vitest 测试；Rust 默认测试为 17 项通过、1 项忽略，另有需要真实且完成索引的 Everything Query2 IPC 显式集成测试和系统应用目录扫描。
+- Playwright 已验证 `jsq`、自定义 `jsb`、单位换算、结果菜单、别名标签和快捷键录制；截图位于 `output/playwright/quick-launch-03.png` 与 `settings-hotkeys-03.png`。
+- 真实 Everything 查询回复使用官方 SDK 默认 ID `0`；`cargo test --manifest-path src-tauri/Cargo.toml everything_ipc::tests::queries_running_everything_when_available -- --ignored` 已通过，实机测试结束后已退出本次临时启动的 Everything 进程。

@@ -58,6 +58,50 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             container.hidden = hidden;
         }
+        AppOperation::SetContainerPinned {
+            container_id,
+            pinned,
+        } => {
+            let container = data
+                .containers
+                .iter_mut()
+                .find(|item| item.id == container_id)
+                .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
+            container.pinned = pinned;
+        }
+        AppOperation::SetShortcutLauncherMeta { shortcut_id, aliases, favorite } => {
+            let shortcut = data.containers.iter_mut().flat_map(|item| &mut item.shortcuts)
+                .find(|item| item.id == shortcut_id)
+                .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
+            shortcut.aliases = aliases;
+            shortcut.favorite = favorite;
+        }
+        AppOperation::SetContainerLauncherMeta { container_id, aliases, favorite } => {
+            let container = data.containers.iter_mut().find(|item| item.id == container_id)
+                .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
+            container.aliases = aliases;
+            container.favorite = favorite;
+        }
+        AppOperation::RecordContainerOpened { container_id, opened_at } => {
+            let container = data.containers.iter_mut().find(|item| item.id == container_id)
+                .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
+            container.open_count = container.open_count.saturating_add(1);
+            container.last_opened_at = Some(opened_at);
+        }
+        AppOperation::UpsertExternalLauncherEntry { entry } => {
+            if let Some(existing) = data.external_launcher_entries.iter_mut().find(|item| item.key == entry.key) { *existing = entry; }
+            else { data.external_launcher_entries.push(entry); }
+            let mut disposable: Vec<_> = data.external_launcher_entries.iter()
+                .filter(|item| !item.favorite && item.aliases.is_empty())
+                .map(|item| (item.key.clone(), item.last_launched_at.unwrap_or(0)))
+                .collect();
+            disposable.sort_by_key(|item| std::cmp::Reverse(item.1));
+            let stale: std::collections::HashSet<_> = disposable.into_iter().skip(100).map(|item| item.0).collect();
+            data.external_launcher_entries.retain(|item| !stale.contains(&item.key));
+        }
+        AppOperation::RemoveExternalLauncherEntry { key } => {
+            data.external_launcher_entries.retain(|item| item.key != key);
+        }
         AppOperation::DeleteContainer {
             container_id,
             trash_id,
@@ -227,6 +271,11 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
                                 name: "已恢复".to_string(),
                                 hidden: false,
                                 pinned: false,
+                                aliases: Vec::new(),
+                                favorite: false,
+                                open_count: 0,
+                                last_opened_at: None,
+                                hotkey: None,
                                 shortcuts: Vec::new(),
                             });
                             data.settings.default_container_id = id;

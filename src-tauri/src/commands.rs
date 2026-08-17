@@ -1,6 +1,6 @@
 use crate::{
     app_state::{DataState, RuntimeStatus},
-    container_windows, icons,
+    container_windows, icons, launcher,
     models::{AppData, AppOperation, ShortcutInfo},
     operations, storage,
     watcher::WatcherState,
@@ -42,9 +42,13 @@ pub fn apply_app_operation(
         .map_err(|_| AppError::Message("数据写入锁不可用".to_string()))?;
     let path = storage::data_path(&app)?;
     let mut data = storage::load(&path)?;
+    let removed_hotkey = if let AppOperation::DeleteContainer { container_id, .. } = &operation {
+        data.containers.iter().find(|item| item.id == *container_id).and_then(|item| item.hotkey.clone())
+    } else { None };
     operations::apply(&mut data, operation)?;
     storage::ensure_daily_backup(&path)?;
     storage::save(&path, &data)?;
+    if let Some(accelerator) = removed_hotkey { crate::hotkeys::unregister(&app, &accelerator); }
     emit_data_changed(&app, data.revision)?;
     Ok(data)
 }
@@ -58,6 +62,31 @@ pub async fn create_container_window(app: AppHandle, container_id: String) -> Re
 pub fn hide_container_window(app: AppHandle, container_id: String) -> Result<(), AppError> {
     container_windows::hide(&app, &container_id)
 }
+
+#[tauri::command]
+pub fn get_container_window_settings(app: AppHandle, container_id: String) -> Result<container_windows::ContainerWindowSettings, AppError> {
+    container_windows::settings(&app, &container_id)
+}
+
+#[tauri::command]
+pub fn update_container_window_settings(app: AppHandle, container_id: String, settings: container_windows::ContainerWindowSettings) -> Result<container_windows::ContainerWindowSettings, AppError> {
+    container_windows::update_settings(&app, &container_id, settings)
+}
+
+#[tauri::command]
+pub fn show_all_container_windows(app: AppHandle) -> Result<(), AppError> { container_windows::show_all(&app) }
+
+#[tauri::command]
+pub fn hide_all_container_windows(app: AppHandle) -> Result<(), AppError> { container_windows::hide_all(&app) }
+
+#[tauri::command]
+pub fn list_monitors(app: AppHandle) -> Result<Vec<container_windows::MonitorInfo>, AppError> { container_windows::monitors(&app) }
+
+#[tauri::command]
+pub fn set_container_window_pinned(app: AppHandle, container_id: String, pinned: bool) -> Result<(), AppError> { container_windows::set_pinned(&app, &container_id, pinned) }
+
+#[tauri::command]
+pub fn restore_container_mouse_interaction(app: AppHandle) -> Result<(), AppError> { container_windows::restore_mouse_interaction(&app) }
 
 #[tauri::command]
 pub fn show_quick_launch(app: AppHandle) -> Result<(), AppError> {
@@ -113,7 +142,7 @@ fn validate_launch_target(target: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn launch_target(
+pub(crate) fn launch_target(
     target: &str,
     arguments: Option<&str>,
     working_directory: Option<&str>,
@@ -172,6 +201,21 @@ fn launch_target(
     Ok(())
 }
 
+#[cfg(windows)]
+pub(crate) fn launch_shell_app(app_id: &str) -> Result<(), AppError> {
+    if app_id.trim().is_empty() || app_id.contains("..") || !app_id.chars().all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '!' | '+' | '-' | '{' | '}' | '\\')) { return Err(AppError::Message("系统应用标识无效".into())); }
+    let target = format!("shell:AppsFolder\\{}", app_id.trim());
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{core::PCWSTR, Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL}};
+    let wide: Vec<u16> = std::ffi::OsStr::new(&target).encode_wide().chain(Some(0)).collect();
+    let result = unsafe { ShellExecuteW(None, PCWSTR::null(), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+    if result.0 as isize <= 32 { return Err(AppError::Message("系统应用启动失败".into())); }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn launch_shell_app(_: &str) -> Result<(), AppError> { Err(AppError::Message("当前平台不支持系统应用".into())) }
+
 #[tauri::command]
 pub fn launch_path(path: String) -> Result<(), AppError> {
     launch_target(path.trim(), None, None)
@@ -181,6 +225,7 @@ pub fn launch_path(path: String) -> Result<(), AppError> {
 pub fn launch_shortcut(
     app: AppHandle,
     state: State<DataState>,
+    catalog_state: State<launcher::SystemCatalogState>,
     shortcut_id: String,
 ) -> Result<AppData, AppError> {
     let _guard = state
@@ -195,11 +240,15 @@ pub fn launch_shortcut(
         .flat_map(|container| &mut container.shortcuts)
         .find(|item| item.id == shortcut_id)
         .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
-    launch_target(
-        &shortcut.path,
-        shortcut.arguments.as_deref(),
-        shortcut.working_directory.as_deref(),
-    )?;
+    match shortcut.target_type {
+        crate::models::LaunchTargetType::ShellApp => {
+            if !launcher::is_catalog_shell_app(&app, &catalog_state, &shortcut.path) {
+                return Err(AppError::Message("系统应用标识不在当前应用目录中".into()));
+            }
+            launch_shell_app(&shortcut.path)?
+        }
+        _ => launch_target(&shortcut.path, shortcut.arguments.as_deref(), shortcut.working_directory.as_deref())?,
+    }
     shortcut.launch_count = shortcut.launch_count.saturating_add(1);
     shortcut.last_launched_at = Some(now_ms());
     data.revision = data.revision.saturating_add(1);
@@ -362,6 +411,98 @@ pub fn recycle_source(path: String) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+pub fn hide_path(path: String) -> Result<(), AppError> {
+    set_local_path_hidden(Path::new(path.trim()), true)
+}
+
+#[tauri::command]
+pub fn show_path(path: String) -> Result<(), AppError> {
+    set_local_path_hidden(Path::new(path.trim()), false)
+}
+
+#[tauri::command]
+pub fn toggle_path_hidden(path: String) -> Result<bool, AppError> {
+    let path = Path::new(path.trim());
+    let hidden = is_local_path_hidden(path)?;
+    set_local_path_hidden(path, !hidden)?;
+    Ok(!hidden)
+}
+
+#[tauri::command]
+pub fn get_path_hidden(path: String) -> Result<bool, AppError> {
+    is_local_path_hidden(Path::new(path.trim()))
+}
+
+fn is_local_path_hidden(path: &Path) -> Result<bool, AppError> {
+    if !path.is_absolute() || !path.exists() {
+        return Err(AppError::Message("只能处理存在的绝对路径".into()));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let attributes = unsafe { GetFileAttributesW(windows::core::PCWSTR(wide.as_ptr())) };
+        if attributes == u32::MAX { return Err(AppError::Message("无法读取文件属性".into())); }
+        Ok(attributes & (FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0) != 0)
+    }
+    #[cfg(not(windows))]
+    { Ok(false) }
+}
+
+fn set_local_path_hidden(path: &Path, hidden: bool) -> Result<(), AppError> {
+    if !path.is_absolute() || !path.exists() { return Err(AppError::Message("只能处理存在的绝对路径".into())); }
+    #[cfg(windows)] {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::{GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe {
+            let attributes = GetFileAttributesW(windows::core::PCWSTR(wide.as_ptr()));
+            if attributes == u32::MAX { return Err(AppError::Message("无法读取文件属性".into())); }
+            let managed = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+            let next = if hidden { attributes | managed } else { attributes & !managed };
+            SetFileAttributesW(windows::core::PCWSTR(wide.as_ptr()), windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(next)).map_err(|error| AppError::Message(error.to_string()))?;
+            use std::ffi::c_void;
+            use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ATTRIBUTES, SHCNF_PATHW};
+            SHChangeNotify(SHCNE_ATTRIBUTES, SHCNF_PATHW, Some(wide.as_ptr() as *const c_void), None);
+            let verified = GetFileAttributesW(windows::core::PCWSTR(wide.as_ptr()));
+            if verified == u32::MAX {
+                return Err(AppError::Message("属性设置后无法验证文件状态".into()));
+            }
+            let is_hidden = verified & managed != 0;
+            if is_hidden != hidden {
+                return Err(AppError::Message("文件属性未能按预期更新，请检查文件权限".into()));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn hide_paths(paths: Vec<String>) -> Result<usize, AppError> {
+    let mut hidden = 0;
+    for path in paths {
+        if path.starts_with("http://") || path.starts_with("https://") { continue; }
+        if set_local_path_hidden(Path::new(path.trim()), true).is_ok() {
+            hidden += 1;
+        }
+    }
+    Ok(hidden)
+}
+
+#[tauri::command]
+pub fn show_paths(paths: Vec<String>) -> Result<usize, AppError> {
+    let mut shown = 0;
+    for path in paths {
+        if path.starts_with("http://") || path.starts_with("https://") { continue; }
+        if set_local_path_hidden(Path::new(path.trim()), false).is_ok() {
+            shown += 1;
+        }
+    }
+    Ok(shown)
+}
+
+#[tauri::command]
 pub fn export_backup(app: AppHandle) -> Result<Option<String>, AppError> {
     let Some(target) = rfd::FileDialog::new()
         .set_file_name(format!(
@@ -445,7 +586,37 @@ mod tests {
     fn validates_supported_launch_targets() {
         assert!(validate_launch_target("https://example.com/app").is_ok());
         assert!(validate_launch_target("relative.exe").is_err());
+        assert!(validate_launch_target("powershell.exe -Command whoami").is_err());
+        assert!(validate_launch_target("file:///C:/Windows/System32/cmd.exe").is_err());
+        assert!(validate_launch_target("custom-protocol:payload").is_err());
         assert!(validate_launch_target("").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hides_and_restores_managed_file_attributes() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::{
+            GetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM,
+        };
+
+        let path = std::env::temp_dir().join(format!("deskbox-hide-{}.txt", now_ms()));
+        std::fs::write(&path, b"DeskBox hidden attribute test").unwrap();
+        set_local_path_hidden(&path, true).unwrap();
+
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let hidden_attributes = unsafe { GetFileAttributesW(windows::core::PCWSTR(wide.as_ptr())) };
+        let hidden = hidden_attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0;
+        let system = hidden_attributes & FILE_ATTRIBUTE_SYSTEM.0 != 0;
+
+        set_local_path_hidden(&path, false).unwrap();
+        let restored_attributes = unsafe { GetFileAttributesW(windows::core::PCWSTR(wide.as_ptr())) };
+        let restored_hidden = restored_attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0;
+        let restored_system = restored_attributes & FILE_ATTRIBUTE_SYSTEM.0 != 0;
+        std::fs::remove_file(path).unwrap();
+
+        assert!(hidden && system);
+        assert!(!restored_hidden && !restored_system);
     }
 
     #[cfg(windows)]

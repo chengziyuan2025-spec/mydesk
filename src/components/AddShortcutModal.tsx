@@ -5,7 +5,7 @@ import { Modal } from "./Modal";
 
 interface AddShortcutModalProps {
   containerName: string;
-  onAdd: (name: string, path: string) => Promise<void>;
+  onAdd: (name: string, path: string, hideSource: boolean) => Promise<void>;
   onClose: () => void;
 }
 
@@ -18,6 +18,7 @@ export function AddShortcutModal({ containerName, onAdd, onClose }: AddShortcutM
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [hideSource, setHideSource] = useState(false);
 
   const browse = async () => {
     const selected = await platform.pickPath();
@@ -30,7 +31,7 @@ export function AddShortcutModal({ containerName, onAdd, onClose }: AddShortcutM
     event.preventDefault();
     if (!name.trim() || !path.trim()) return;
     setSubmitting(true);
-    await onAdd(name.trim(), path.trim());
+    await onAdd(name.trim(), path.trim(), hideSource);
     onClose();
   };
 
@@ -41,6 +42,7 @@ export function AddShortcutModal({ containerName, onAdd, onClose }: AddShortcutM
           <span>显示名称</span>
           <input autoFocus maxLength={40} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：Photoshop" />
         </label>
+        <label className="check-field"><input type="checkbox" checked={hideSource} onChange={(event) => setHideSource(event.target.checked)} /><span>添加后隐藏桌面源文件</span></label>
         <label className="field">
           <span>文件或程序路径</span>
           <div className="path-input">

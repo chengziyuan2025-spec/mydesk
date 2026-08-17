@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppData, AppOperation } from "../types";
+import type { AppData, AppOperation, ContainerWindowSettings, EverythingSearchItem, HotkeyAction, HotkeyStatus, LaunchTargetType, MonitorInfo, SystemAppCatalogItem } from "../types";
 import { createDefaultData } from "../data/defaults";
 import { applyOperation, migrateBrowserData } from "../data/operations";
 
@@ -23,6 +23,8 @@ export interface ShortcutInfo {
   arguments: string | null;
   workingDirectory: string | null;
 }
+
+export interface EverythingDetection { installed: boolean; running: boolean; executablePath: string | null; message: string }
 
 export const platform = {
   isDesktop: isTauri,
@@ -59,6 +61,12 @@ export const platform = {
   async reveal(path: string): Promise<void> { if (isTauri()) await invoke("reveal_in_explorer", { path }); },
   async configureWatcher(enabled: boolean): Promise<void> { if (isTauri()) await invoke("configure_desktop_watcher", { enabled }); },
   async recycleSource(path: string): Promise<void> { if (isTauri()) await invoke("recycle_source", { path }); },
+  async hidePath(path: string): Promise<void> { if (isTauri()) await invoke("hide_path", { path }); },
+  async showPath(path: string): Promise<void> { if (isTauri()) await invoke("show_path", { path }); },
+  async togglePathHidden(path: string): Promise<boolean> { return isTauri() ? invoke<boolean>("toggle_path_hidden", { path }) : false; },
+  async getPathHidden(path: string): Promise<boolean> { return isTauri() ? invoke<boolean>("get_path_hidden", { path }) : false; },
+  async hidePaths(paths: string[]): Promise<number> { return isTauri() ? invoke<number>("hide_paths", { paths }) : paths.filter((path) => !/^https?:\/\//i.test(path)).length; },
+  async showPaths(paths: string[]): Promise<number> { return isTauri() ? invoke<number>("show_paths", { paths }) : paths.filter((path) => !/^https?:\/\//i.test(path)).length; },
   async exportBackup(): Promise<string | null> {
     if (isTauri()) return invoke<string | null>("export_backup");
     const blob = new Blob([JSON.stringify(browserLoad(), null, 2)], { type: "application/json" });
@@ -93,6 +101,65 @@ export const platform = {
   },
   async createContainerWindow(containerId: string): Promise<void> { if (isTauri()) await invoke("create_container_window", { containerId }); },
   async hideContainerWindow(containerId: string): Promise<void> { if (isTauri()) await invoke("hide_container_window", { containerId }); },
+  async getContainerWindowSettings(containerId: string): Promise<ContainerWindowSettings> {
+    if (isTauri()) return invoke<ContainerWindowSettings>("get_container_window_settings", { containerId });
+    const key = `deskbox-window-${containerId}`;
+    const stored = localStorage.getItem(key);
+    if (stored) { try { return { monitorKey: null, x: 140, y: 120, width: 420, height: 360, collapsed: false, locked: false, opacity: 100, clickThrough: false, snapEdge: "none", autoHide: false, layout: "grid", skipTaskbar: false, allWorkspaces: false, ...JSON.parse(stored) }; } catch { /* use defaults */ } }
+    return { monitorKey: null, x: 140, y: 120, width: 420, height: 360, collapsed: false, locked: false, opacity: 100, clickThrough: false, snapEdge: "none", autoHide: false, layout: "grid", skipTaskbar: false, allWorkspaces: false };
+  },
+  async launchExternalItem(targetType: LaunchTargetType, target: string): Promise<void> {
+    if (isTauri()) await invoke("launch_external_item", { targetType, target });
+  },
+  async getSystemAppCatalog(refresh = false): Promise<SystemAppCatalogItem[]> {
+    if (isTauri()) return invoke<SystemAppCatalogItem[]>("get_system_app_catalog", { refresh });
+    return [
+      { key: "system:browser-calculator", name: "计算器", targetType: "path", target: "C:\\Windows\\System32\\calc.exe", sourcePath: "C:\\Windows\\System32\\calc.exe", icon: null },
+      { key: "system:browser-photoshop", name: "Adobe Photoshop", targetType: "path", target: "C:\\Program Files\\Adobe\\Photoshop.exe", sourcePath: null, icon: null },
+    ];
+  },
+  async refreshSystemAppCatalog(): Promise<SystemAppCatalogItem[]> {
+    if (isTauri()) return invoke<SystemAppCatalogItem[]>("refresh_system_app_catalog");
+    return this.getSystemAppCatalog(true);
+  },
+  async searchEverything(query: string, limit = 30): Promise<EverythingSearchItem[]> {
+    if (isTauri()) return invoke<EverythingSearchItem[]>("search_everything", { query, limit });
+    const samples: EverythingSearchItem[] = [
+      { key: "file:c:\\users\\demo\\documents\\deskbox-notes.txt", name: "deskbox-notes.txt", path: "C:\\Users\\demo\\Documents\\deskbox-notes.txt", isDirectory: false },
+      { key: "file:c:\\users\\demo\\downloads", name: "Downloads", path: "C:\\Users\\demo\\Downloads", isDirectory: true },
+    ];
+    const needle = query.trim().toLocaleLowerCase();
+    return samples.filter((item) => `${item.name}\n${item.path}`.toLocaleLowerCase().includes(needle)).slice(0, limit);
+  },
+  async detectEverything(): Promise<EverythingDetection> {
+    return isTauri() ? invoke<EverythingDetection>("detect_everything") : { installed: false, running: false, executablePath: null, message: "浏览器预览不连接 Everything" };
+  },
+  async setHotkeyBinding(action: HotkeyAction, accelerator: string | null): Promise<AppData> {
+    if (isTauri()) return invoke<AppData>("set_hotkey_binding", { action, accelerator });
+    const data = browserLoad();
+    if (action === "mainWindow") data.settings.hotkeys.mainWindow = accelerator;
+    else if (action === "quickLaunch") data.settings.hotkeys.quickLaunch = accelerator;
+    else if (action === "toggleContainers") data.settings.hotkeys.toggleContainers = accelerator;
+    else { const container = data.containers.find((item) => item.id === action.slice("container:".length)); if (container) container.hotkey = accelerator; }
+    data.revision += 1; browserSave(data); window.dispatchEvent(new CustomEvent("deskbox-browser-data", { detail: data.revision })); return data;
+  },
+  async getHotkeyStatuses(): Promise<HotkeyStatus[]> {
+    if (isTauri()) return invoke<HotkeyStatus[]>("get_hotkey_statuses");
+    const data = browserLoad();
+    const containerValues: Array<[HotkeyAction, string | null]> = data.containers.map((item) => [`container:${item.id}`, item.hotkey]);
+    const values: Array<[HotkeyAction, string | null]> = [["mainWindow", data.settings.hotkeys.mainWindow], ["quickLaunch", data.settings.hotkeys.quickLaunch], ["toggleContainers", data.settings.hotkeys.toggleContainers], ...containerValues];
+    return values.map(([action, accelerator]) => ({ action, accelerator, state: accelerator ? "active" : "unassigned", message: null }));
+  },
+  async updateContainerWindowSettings(containerId: string, settings: ContainerWindowSettings): Promise<ContainerWindowSettings> {
+    if (isTauri()) return invoke<ContainerWindowSettings>("update_container_window_settings", { containerId, settings });
+    localStorage.setItem(`deskbox-window-${containerId}`, JSON.stringify(settings));
+    return settings;
+  },
+  async showAllContainerWindows(): Promise<void> { if (isTauri()) await invoke("show_all_container_windows"); },
+  async hideAllContainerWindows(): Promise<void> { if (isTauri()) await invoke("hide_all_container_windows"); },
+  async listMonitors(): Promise<MonitorInfo[]> { return isTauri() ? invoke<MonitorInfo[]>("list_monitors") : []; },
+  async setContainerWindowPinned(containerId: string, pinned: boolean): Promise<void> { if (isTauri()) await invoke("set_container_window_pinned", { containerId, pinned }); },
+  async restoreContainerMouseInteraction(): Promise<void> { if (isTauri()) await invoke("restore_container_mouse_interaction"); },
   async showQuickLaunch(): Promise<void> { if (isTauri()) await invoke("show_quick_launch"); },
   async minimize(): Promise<void> { if (isTauri()) await getCurrentWindow().minimize(); },
   async close(): Promise<void> { if (isTauri()) await getCurrentWindow().close(); },

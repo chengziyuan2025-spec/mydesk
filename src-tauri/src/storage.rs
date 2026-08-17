@@ -101,6 +101,21 @@ fn visit_all_shortcuts(
     }
 }
 
+fn visit_all_containers(value: &mut Value, visit: &mut dyn FnMut(&mut serde_json::Map<String, Value>)) {
+    let Some(object) = value.as_object_mut() else { return; };
+    if let Some(containers) = object.get_mut("containers").and_then(Value::as_array_mut) {
+        for container in containers { if let Some(container) = container.as_object_mut() { visit(container); } }
+    }
+    if let Some(trash) = object.get_mut("trash").and_then(Value::as_array_mut) {
+        for entry in trash {
+            let Some(entry) = entry.as_object_mut() else { continue; };
+            if entry.get("kind").and_then(Value::as_str) == Some("container") {
+                if let Some(container) = entry.get_mut("item").and_then(Value::as_object_mut) { visit(container); }
+            }
+        }
+    }
+}
+
 fn migrate_value(mut value: Value) -> Result<(Value, bool), AppError> {
     let version = value.get("version").and_then(Value::as_u64).unwrap_or(1) as u32;
     if version > CURRENT_DATA_VERSION {
@@ -134,6 +149,34 @@ fn migrate_value(mut value: Value) -> Result<(Value, bool), AppError> {
             item.entry("arguments".to_string()).or_insert(Value::Null);
             item.entry("workingDirectory".to_string())
                 .or_insert(Value::Null);
+        });
+        migrated = true;
+    }
+    if version < 4 {
+        let object = value.as_object_mut().ok_or_else(|| AppError::Message("数据根节点必须是对象".to_string()))?;
+        object.insert("version".to_string(), json!(4));
+        object.entry("externalLauncherEntries".to_string()).or_insert(json!([]));
+        if let Some(settings) = object.get_mut("settings").and_then(Value::as_object_mut) {
+            settings.entry("hotkeys".to_string()).or_insert(json!({
+                "mainWindow": "Ctrl+Shift+H", "quickLaunch": "Alt+Space", "toggleContainers": null
+            }));
+            settings.entry("everything".to_string()).or_insert(json!({ "enabled": false, "executablePath": null }));
+        }
+        visit_all_containers(&mut value, &mut |container| {
+            container.entry("aliases".to_string()).or_insert(json!([]));
+            container.entry("favorite".to_string()).or_insert(json!(false));
+            container.entry("openCount".to_string()).or_insert(json!(0));
+            container.entry("lastOpenedAt".to_string()).or_insert(Value::Null);
+            container.entry("hotkey".to_string()).or_insert(Value::Null);
+        });
+        visit_all_shortcuts(&mut value, &mut |item| {
+            let target_type = item.get("path").and_then(Value::as_str)
+                .map(|path| if path.starts_with("http://") || path.starts_with("https://") { "url" } else { "path" })
+                .unwrap_or("path");
+            item.entry("targetType".to_string()).or_insert(json!(target_type));
+            item.entry("aliases".to_string()).or_insert(json!([]));
+            item.entry("favorite".to_string()).or_insert(json!(false));
+            item.entry("sourcePath".to_string()).or_insert(Value::Null);
         });
         migrated = true;
     }
@@ -234,7 +277,7 @@ mod tests {
         let raw = r#"{"version":1,"containers":[],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":""}}"#;
         let (data, migrated) = parse_and_migrate(raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 3);
+        assert_eq!(data.version, 4);
         assert_eq!(data.revision, 0);
     }
 
@@ -247,7 +290,7 @@ mod tests {
 
         let (data, migrated) = parse_and_migrate(&raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 3);
+        assert_eq!(data.version, 4);
         assert_eq!(
             data.containers[0].shortcuts[0].source,
             crate::models::ShortcutSource::Manual
@@ -274,14 +317,16 @@ mod tests {
     }
 
     #[test]
-    fn version_three_missing_optional_fields_uses_defaults() {
+    fn version_three_migrates_launcher_fields() {
         let raw = r#"{"version":3,"revision":0,"containers":[{"id":"active","name":"Active","hidden":false,"pinned":false,"shortcuts":[{"id":"shortcut","name":"App","path":"C:\\app.exe","icon":null,"createdAt":1,"launchCount":0,"lastLaunchedAt":null}]}],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":"active"},"trash":[]}"#;
         let (data, migrated) = parse_and_migrate(raw).unwrap();
-        assert!(!migrated);
+        assert!(migrated);
         let shortcut = &data.containers[0].shortcuts[0];
         assert_eq!(shortcut.source, crate::models::ShortcutSource::Manual);
         assert_eq!(shortcut.arguments, None);
         assert_eq!(shortcut.working_directory, None);
+        assert_eq!(shortcut.target_type, crate::models::LaunchTargetType::Path);
+        assert!(data.external_launcher_entries.is_empty());
     }
 
     #[test]

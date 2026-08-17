@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EyeOff, ExternalLink, Pencil, Trash2 } from "lucide-react";
+import { EyeOff, ExternalLink, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import type { ContainerItem } from "../types";
 import { IconButton } from "./IconButton";
 
@@ -9,6 +9,7 @@ interface ContainerCardProps {
   onRename: (name: string) => void;
   onHide: () => void;
   onDelete: () => void;
+  onTogglePinned: () => void;
 }
 
 export function ContainerCard(props: ContainerCardProps) {
@@ -66,6 +67,7 @@ export function ContainerCard(props: ContainerCardProps) {
           <span className="container-card__count">{container.shortcuts.length}</span>
         </div>
         <div className="container-card__actions">
+          <IconButton label={container.pinned ? "取消置顶" : "置顶容器"} onClick={(event) => { event.stopPropagation(); props.onTogglePinned(); }}>{container.pinned ? <Pin size={16} strokeWidth={1.7} /> : <PinOff size={16} strokeWidth={1.7} />}</IconButton>
           <IconButton label="重命名容器" onClick={(event) => { event.stopPropagation(); setDraftName(container.name); setEditing(true); }}><Pencil size={16} strokeWidth={1.7} /></IconButton>
           <IconButton label="隐藏容器" onClick={(event) => { event.stopPropagation(); props.onHide(); }}><EyeOff size={16} strokeWidth={1.7} /></IconButton>
           <IconButton label="删除容器" tone="danger" onClick={(event) => { event.stopPropagation(); props.onDelete(); }}><Trash2 size={16} strokeWidth={1.7} /></IconButton>

@@ -3,6 +3,7 @@ import type { ShortcutItem } from "../types";
 export interface ShortcutCandidate {
   name: string;
   path: string;
+  sourcePath?: string | null;
   source: ShortcutItem["source"];
   arguments: string | null;
   workingDirectory: string | null;

@@ -3,7 +3,7 @@ import { createDefaultData } from "./defaults";
 import { applyOperation, migrateBrowserData } from "./operations";
 
 describe("DeskBox operations", () => {
-  it("migrates v1 active and trashed shortcuts to v3", () => {
+  it("migrates v1 active and trashed shortcuts to v4", () => {
     const legacy = createDefaultData() as unknown as Record<string, unknown>;
     legacy.version = 1;
     delete legacy.revision;
@@ -17,7 +17,9 @@ describe("DeskBox operations", () => {
       { kind: "container", id: "trash-container", deletedAt: 1, originalIndex: 0, item: { id: "old", name: "Old", hidden: false, pinned: false, shortcuts: [{ ...active, id: "nested" }] } },
     ];
     const migrated = migrateBrowserData(legacy);
-    expect(migrated.version).toBe(3);
+    expect(migrated.version).toBe(4);
+    expect(migrated.settings.hotkeys.mainWindow).toBe("Ctrl+Shift+H");
+    expect(migrated.externalLauncherEntries).toEqual([]);
     expect(migrated.containers[0].shortcuts[0]).toMatchObject({ source: "manual", arguments: null, workingDirectory: null });
     expect(migrated.trash[0].kind === "shortcut" && migrated.trash[0].item.source).toBe("manual");
     expect(migrated.trash[1].kind === "container" && migrated.trash[1].item.shortcuts[0].workingDirectory).toBeNull();
@@ -38,6 +40,12 @@ describe("DeskBox operations", () => {
     const [first, second] = data.containers[0].shortcuts;
     const next = applyOperation(data, { type: "moveShortcut", shortcutId: second.id, targetContainerId: data.containers[0].id, beforeShortcutId: first.id });
     expect(next.containers[0].shortcuts.map((item) => item.id)).toEqual([second.id, first.id]);
+  });
+
+  it("persists container pinned state", () => {
+    const data = createDefaultData();
+    const next = applyOperation(data, { type: "setContainerPinned", containerId: data.containers[0].id, pinned: true });
+    expect(next.containers[0].pinned).toBe(true);
   });
 
   it("restores a shortcut into a fallback container", () => {

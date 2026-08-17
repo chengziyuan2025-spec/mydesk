@@ -4,6 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import type { AppData, ContainerItem, ShortcutItem } from "../types";
 import { ShortcutTile } from "./ShortcutTile";
+import { platform } from "../services/platform";
 
 interface ManageViewProps {
   data: AppData;
@@ -19,7 +20,7 @@ function SortableShortcut({ shortcut, container, data, props }: { shortcut: Shor
   return (
     <div ref={sortable.setNodeRef} data-container-id={container.id} className={`manage-shortcut ${sortable.isDragging ? "is-dragging" : ""}`} style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }}>
       <button type="button" className="shortcut-drag-handle" aria-label={`拖动 ${shortcut.name}`} title="拖动快捷方式" {...sortable.attributes} {...sortable.listeners}><GripVertical size={12} /></button>
-      <ShortcutTile shortcut={shortcut} containers={data.containers} containerId={container.id} onMove={(target) => props.onMove(shortcut.id, target)} onLaunch={() => props.onLaunch(shortcut.id)} onReveal={() => props.onReveal(shortcut.path)} onDelete={() => props.onDelete(container.id, shortcut.id)} />
+      <ShortcutTile shortcut={shortcut} containers={data.containers} containerId={container.id} onMove={(target) => props.onMove(shortcut.id, target)} onLaunch={() => props.onLaunch(shortcut.id)} onReveal={() => props.onReveal(shortcut.path)} onDelete={() => props.onDelete(container.id, shortcut.id)} onToggleSource={() => void platform.togglePathHidden(shortcut.sourcePath ?? shortcut.path)} />
     </div>
   );
 }

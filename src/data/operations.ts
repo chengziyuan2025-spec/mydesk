@@ -27,6 +27,37 @@ export function applyOperation(current: AppData, operation: AppOperation): AppDa
       if (container) container.hidden = operation.hidden;
       break;
     }
+    case "setContainerPinned": {
+      const container = data.containers.find((item) => item.id === operation.containerId);
+      if (container) container.pinned = operation.pinned;
+      break;
+    }
+    case "setShortcutLauncherMeta": {
+      const shortcut = data.containers.flatMap((item) => item.shortcuts).find((item) => item.id === operation.shortcutId);
+      if (shortcut) { shortcut.aliases = operation.aliases; shortcut.favorite = operation.favorite; }
+      break;
+    }
+    case "setContainerLauncherMeta": {
+      const container = data.containers.find((item) => item.id === operation.containerId);
+      if (container) { container.aliases = operation.aliases; container.favorite = operation.favorite; }
+      break;
+    }
+    case "recordContainerOpened": {
+      const container = data.containers.find((item) => item.id === operation.containerId);
+      if (container) { container.openCount += 1; container.lastOpenedAt = operation.openedAt; }
+      break;
+    }
+    case "upsertExternalLauncherEntry": {
+      const index = data.externalLauncherEntries.findIndex((item) => item.key === operation.entry.key);
+      if (index < 0) data.externalLauncherEntries.push(operation.entry);
+      else data.externalLauncherEntries[index] = operation.entry;
+      const disposable = data.externalLauncherEntries
+        .filter((item) => !item.favorite && item.aliases.length === 0)
+        .sort((a, b) => (b.lastLaunchedAt ?? 0) - (a.lastLaunchedAt ?? 0));
+      for (const item of disposable.slice(100)) data.externalLauncherEntries = data.externalLauncherEntries.filter((candidate) => candidate.key !== item.key);
+      break;
+    }
+    case "removeExternalLauncherEntry": data.externalLauncherEntries = data.externalLauncherEntries.filter((item) => item.key !== operation.key); break;
     case "deleteContainer": {
       const index = data.containers.findIndex((item) => item.id === operation.containerId);
       if (index < 0) break;
@@ -85,7 +116,7 @@ export function applyOperation(current: AppData, operation: AppOperation): AppDa
         let container = data.containers.find((item) => item.id === entry.originalContainerId)
           ?? data.containers.find((item) => item.id === data.settings.defaultContainerId);
         if (!container) {
-          container = { id: uniqueContainerId(data, "restored-container"), name: "已恢复", hidden: false, pinned: false, shortcuts: [] } satisfies ContainerItem;
+          container = { id: uniqueContainerId(data, "restored-container"), name: "已恢复", hidden: false, pinned: false, aliases: [], favorite: false, openCount: 0, lastOpenedAt: null, hotkey: null, shortcuts: [] } satisfies ContainerItem;
           data.containers.push(container);
           data.settings.defaultContainerId = container.id;
         }
@@ -104,27 +135,46 @@ export function applyOperation(current: AppData, operation: AppOperation): AppDa
 export function migrateBrowserData(value: unknown): AppData {
   if (!value || typeof value !== "object") throw new Error("无效数据");
   const raw = value as Record<string, unknown>;
-  if (Number(raw.version ?? 1) > 3) throw new Error("数据版本过高");
+  if (Number(raw.version ?? 1) > 4) throw new Error("数据版本过高");
   const data = structuredClone(value) as AppData;
-  data.version = 3;
+  data.version = 4;
   data.revision ??= 0;
   data.trash ??= [];
+  data.externalLauncherEntries ??= [];
+  data.settings.hotkeys ??= { mainWindow: "Ctrl+Shift+H", quickLaunch: "Alt+Space", toggleContainers: null };
+  data.settings.everything ??= { enabled: false, executablePath: null };
 
   const migrateShortcut = (shortcut: ShortcutItem) => {
     shortcut.source ??= "manual";
+    shortcut.targetType ??= /^https?:\/\//i.test(shortcut.path) ? "url" : "path";
+    shortcut.aliases ??= [];
+    shortcut.favorite ??= false;
     shortcut.arguments ??= null;
     shortcut.workingDirectory ??= null;
+    shortcut.sourcePath ??= null;
     shortcut.icon ??= null;
     shortcut.createdAt ??= 0;
     shortcut.launchCount ??= 0;
     shortcut.lastLaunchedAt ??= null;
   };
   for (const container of data.containers ?? []) {
+    container.aliases ??= [];
+    container.favorite ??= false;
+    container.openCount ??= 0;
+    container.lastOpenedAt ??= null;
+    container.hotkey ??= null;
     for (const shortcut of container.shortcuts ?? []) migrateShortcut(shortcut);
   }
   for (const entry of data.trash as TrashEntry[]) {
     if (entry.kind === "shortcut") migrateShortcut(entry.item);
-    else for (const shortcut of entry.item.shortcuts ?? []) migrateShortcut(shortcut);
+    else {
+      entry.item.aliases ??= [];
+      entry.item.favorite ??= false;
+      entry.item.openCount ??= 0;
+      entry.item.lastOpenedAt ??= null;
+      entry.item.hotkey ??= null;
+      for (const shortcut of entry.item.shortcuts ?? []) migrateShortcut(shortcut);
+    }
   }
   return data;
 }

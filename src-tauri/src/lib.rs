@@ -2,19 +2,22 @@ mod app_state;
 mod commands;
 mod container_windows;
 mod icons;
+mod hotkeys;
+mod launcher;
+mod everything_ipc;
 mod models;
 mod operations;
 mod storage;
 mod watcher;
 
-use app_state::{DataState, RuntimeStatus};
+use app_state::{DataState, HotkeyRuntime, RuntimeStatus};
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 use thiserror::Error;
 use watcher::WatcherState;
 
@@ -45,7 +48,7 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
-fn toggle_main_window(app: &tauri::AppHandle) {
+pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
@@ -57,7 +60,7 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
-fn toggle_quick_launch(app: &tauri::AppHandle) {
+pub(crate) fn toggle_quick_launch(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("quick-launch") else {
         return;
     };
@@ -78,9 +81,9 @@ fn build_quick_launch(app: &tauri::App) -> tauri::Result<()> {
     let window =
         WebviewWindowBuilder::new(app, "quick-launch", WebviewUrl::App("index.html".into()))
             .title("DeskBox 快速启动")
-            .inner_size(680.0, 460.0)
-            .min_inner_size(680.0, 460.0)
-            .max_inner_size(680.0, 460.0)
+            .inner_size(720.0, 520.0)
+            .min_inner_size(720.0, 520.0)
+            .max_inner_size(720.0, 520.0)
             .decorations(false)
             .transparent(true)
             .shadow(true)
@@ -111,6 +114,9 @@ pub fn run() {
         }))
         .manage(DataState::default())
         .manage(RuntimeStatus::default())
+        .manage(HotkeyRuntime::default())
+        .manage(launcher::SystemCatalogState::default())
+        .manage(everything_ipc::EverythingState::default())
         .manage(WatcherState::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -118,29 +124,23 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    if shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyH) {
-                        toggle_main_window(app);
-                    } else if shortcut.matches(Modifiers::ALT, Code::Space) {
-                        toggle_quick_launch(app);
-                    }
+                    hotkeys::handle(app, shortcut);
                 })
                 .build(),
         )
         .setup(|app| {
             build_quick_launch(app)?;
-            app.global_shortcut().register("Ctrl+Shift+H")?;
-            if let Err(error) = app.global_shortcut().register("Alt+Space") {
-                let message = format!("Alt+Space 注册失败：{error}。仍可从主页打开快速启动。");
+            if let Err(error) = hotkeys::register_startup(app.handle()) {
+                let message = error.to_string();
                 eprintln!("{message}");
-                if let Ok(mut status) = app.state::<RuntimeStatus>().0.lock() {
-                    *status = Some(message);
-                }
+                if let Ok(mut status) = app.state::<RuntimeStatus>().0.lock() { *status = Some(message); }
             }
 
             let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
             let quick = MenuItem::with_id(app, "quick", "快速启动", true, None::<&str>)?;
+            let restore_mouse = MenuItem::with_id(app, "restore-mouse", "恢复悬浮窗鼠标交互", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 DeskBox", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &quick, &quit])?;
+            let menu = Menu::with_items(app, &[&toggle, &quick, &restore_mouse, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().expect("应用图标缺失").clone())
                 .tooltip("DeskBox")
@@ -148,6 +148,7 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => toggle_main_window(app),
                     "quick" => toggle_quick_launch(app),
+                    "restore-mouse" => { let _ = container_windows::restore_mouse_interaction(app); }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -169,6 +170,13 @@ pub fn run() {
             commands::apply_app_operation,
             commands::create_container_window,
             commands::hide_container_window,
+            commands::get_container_window_settings,
+            commands::update_container_window_settings,
+            commands::show_all_container_windows,
+            commands::hide_all_container_windows,
+            commands::list_monitors,
+            commands::set_container_window_pinned,
+            commands::restore_container_mouse_interaction,
             commands::show_quick_launch,
             commands::pick_shortcut_path,
             commands::extract_icon,
@@ -180,10 +188,23 @@ pub fn run() {
             commands::reveal_in_explorer,
             commands::configure_desktop_watcher,
             commands::recycle_source,
+            commands::hide_path,
+            commands::show_path,
+            commands::toggle_path_hidden,
+            commands::get_path_hidden,
+            commands::hide_paths,
+            commands::show_paths,
             commands::export_backup,
             commands::import_backup,
             commands::open_backup_directory,
             commands::get_runtime_status,
+            hotkeys::set_hotkey_binding,
+            hotkeys::get_hotkey_statuses,
+            launcher::get_system_app_catalog,
+            launcher::refresh_system_app_catalog,
+            launcher::launch_external_item,
+            everything_ipc::detect_everything,
+            everything_ipc::search_everything,
         ])
         .run(tauri::generate_context!())
         .expect("DeskBox 启动失败");
