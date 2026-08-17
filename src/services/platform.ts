@@ -26,16 +26,18 @@ export interface ShortcutInfo {
 }
 
 export interface EverythingDetection { installed: boolean; running: boolean; executablePath: string | null; message: string }
+export interface OperationCommit { revision: number }
+export interface AppDataChange { revision: number; operation: AppOperation | null }
 
 export const platform = {
   isDesktop: isTauri,
   async loadData(): Promise<AppData> { return isTauri() ? invoke<AppData>("load_app_data") : browserLoad(); },
-  async applyOperation(operation: AppOperation): Promise<AppData> {
-    if (isTauri()) return invoke<AppData>("apply_app_operation", { operation });
+  async applyOperation(operation: AppOperation): Promise<OperationCommit> {
+    if (isTauri()) return invoke<OperationCommit>("apply_app_operation", { operation });
     const data = applyOperation(browserLoad(), operation);
     browserSave(data);
-    window.dispatchEvent(new CustomEvent("deskbox-browser-data", { detail: data.revision }));
-    return data;
+    window.dispatchEvent(new CustomEvent("deskbox-browser-data", { detail: { revision: data.revision, operation } satisfies AppDataChange }));
+    return { revision: data.revision };
   },
   async pickPath(): Promise<string | null> { return isTauri() ? invoke<string | null>("pick_shortcut_path") : null; },
   async pickBackgroundMedia(): Promise<BackgroundMediaSelection | null> {
@@ -109,15 +111,21 @@ export const platform = {
     if (!isTauri()) return () => undefined;
     return listen<string>("desktop-file-created", (event) => callback(event.payload));
   },
-  async onAppDataChanged(callback: (revision: number) => void): Promise<UnlistenFn> {
-    if (isTauri()) return listen<number>("app-data-changed", (event) => callback(event.payload));
-    const handler = (event: Event) => callback((event as CustomEvent<number>).detail);
+  async onAppDataChanged(callback: (change: AppDataChange) => void): Promise<UnlistenFn> {
+    if (isTauri()) return listen<AppDataChange>("app-data-changed", (event) => callback(event.payload));
+    const handler = (event: Event) => callback((event as CustomEvent<AppDataChange>).detail);
     window.addEventListener("deskbox-browser-data", handler);
     return () => window.removeEventListener("deskbox-browser-data", handler);
   },
   async onQuickLaunchReset(callback: () => void): Promise<UnlistenFn> {
     if (!isTauri()) return () => undefined;
     return listen("quick-launch-reset", callback);
+  },
+  async onOpenSettings(callback: () => void): Promise<UnlistenFn> {
+    if (isTauri()) return listen("open-settings", callback);
+    const handler = () => callback();
+    window.addEventListener("deskbox-open-settings", handler);
+    return () => window.removeEventListener("deskbox-open-settings", handler);
   },
   currentWindowLabel(): string { return isTauri() ? getCurrentWindow().label : new URLSearchParams(location.search).get("window") ?? "main"; },
   currentContainerId(): string | null {
@@ -166,18 +174,29 @@ export const platform = {
     if (action === "mainWindow") data.settings.hotkeys.mainWindow = accelerator;
     else if (action === "quickLaunch") data.settings.hotkeys.quickLaunch = accelerator;
     else if (action === "toggleContainers") data.settings.hotkeys.toggleContainers = accelerator;
+    else if (action === "settings") data.settings.hotkeys.settings = accelerator;
     else { const container = data.containers.find((item) => item.id === action.slice("container:".length)); if (container) container.hotkey = accelerator; }
-    data.revision += 1; browserSave(data); window.dispatchEvent(new CustomEvent("deskbox-browser-data", { detail: data.revision })); return data;
+    data.revision += 1;
+    browserSave(data);
+    window.dispatchEvent(new CustomEvent("deskbox-browser-data", { detail: { revision: data.revision, operation: null } satisfies AppDataChange }));
+    return data;
   },
   async getHotkeyStatuses(): Promise<HotkeyStatus[]> {
     if (isTauri()) return invoke<HotkeyStatus[]>("get_hotkey_statuses");
     const data = browserLoad();
     const containerValues: Array<[HotkeyAction, string | null]> = data.containers.map((item) => [`container:${item.id}`, item.hotkey]);
-    const values: Array<[HotkeyAction, string | null]> = [["mainWindow", data.settings.hotkeys.mainWindow], ["quickLaunch", data.settings.hotkeys.quickLaunch], ["toggleContainers", data.settings.hotkeys.toggleContainers], ...containerValues];
+    const values: Array<[HotkeyAction, string | null]> = [["mainWindow", data.settings.hotkeys.mainWindow], ["quickLaunch", data.settings.hotkeys.quickLaunch], ["toggleContainers", data.settings.hotkeys.toggleContainers], ["settings", data.settings.hotkeys.settings], ...containerValues];
     return values.map(([action, accelerator]) => ({ action, accelerator, state: accelerator ? "active" : "unassigned", message: null }));
   },
   async updateContainerWindowSettings(containerId: string, settings: ContainerWindowSettings): Promise<ContainerWindowSettings> {
     if (isTauri()) return invoke<ContainerWindowSettings>("update_container_window_settings", { containerId, settings });
+    localStorage.setItem(`deskbox-window-${containerId}`, JSON.stringify(settings));
+    return settings;
+  },
+  async updateContainerWindowOpacity(containerId: string, opacity: number): Promise<ContainerWindowSettings> {
+    if (isTauri()) return invoke<ContainerWindowSettings>("update_container_window_opacity", { containerId, opacity });
+    const settings = await this.getContainerWindowSettings(containerId);
+    settings.opacity = opacity;
     localStorage.setItem(`deskbox-window-${containerId}`, JSON.stringify(settings));
     return settings;
   },
@@ -197,7 +216,10 @@ export const platform = {
   async listMonitors(): Promise<MonitorInfo[]> { return isTauri() ? invoke<MonitorInfo[]>("list_monitors") : []; },
   async setContainerWindowPinned(containerId: string, pinned: boolean): Promise<void> { if (isTauri()) await invoke("set_container_window_pinned", { containerId, pinned }); },
   async restoreContainerMouseInteraction(): Promise<void> { if (isTauri()) await invoke("restore_container_mouse_interaction"); },
+  async hasContainerMouseInteractionBlocked(): Promise<boolean> { return isTauri() ? invoke<boolean>("has_container_mouse_interaction_blocked") : false; },
   async showQuickLaunch(): Promise<void> { if (isTauri()) await invoke("show_quick_launch"); },
+  async showSettings(): Promise<void> { if (isTauri()) await invoke("show_settings_window"); else window.dispatchEvent(new Event("deskbox-open-settings")); },
+  async toggleAllContainerWindows(): Promise<void> { if (isTauri()) await invoke("toggle_all_container_windows"); },
   async minimize(): Promise<void> { if (isTauri()) await getCurrentWindow().minimize(); },
   async close(): Promise<void> { if (isTauri()) await getCurrentWindow().close(); },
   async startDragging(): Promise<void> { if (isTauri()) await getCurrentWindow().startDragging(); },

@@ -108,6 +108,17 @@ fn build_quick_launch(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
+    show_main_window(app);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("open-settings", ());
+    }
+}
+
+pub(crate) fn toggle_settings_window(app: &tauri::AppHandle) {
+    show_settings_window(app);
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -116,6 +127,8 @@ pub fn run() {
         .manage(DataState::default())
         .manage(RuntimeStatus::default())
         .manage(HotkeyRuntime::default())
+        .manage(icons::IconCacheState::default())
+        .manage(container_windows::WindowLayoutState::default())
         .manage(launcher::SystemCatalogState::default())
         .manage(everything_ipc::EverythingState::default())
         .manage(WatcherState::default())
@@ -131,6 +144,9 @@ pub fn run() {
         )
         .setup(|app| {
             build_quick_launch(app)?;
+            if let Err(error) = app.state::<DataState>().read(app.handle()) {
+                eprintln!("DeskBox 数据初始化失败：{error}");
+            }
             if let Err(error) = hotkeys::register_startup(app.handle()) {
                 let message = error.to_string();
                 eprintln!("{message}");
@@ -173,15 +189,19 @@ pub fn run() {
             commands::hide_container_window,
             commands::get_container_window_settings,
             commands::update_container_window_settings,
+            commands::update_container_window_opacity,
             commands::show_all_container_windows,
             commands::hide_all_container_windows,
+            commands::toggle_all_container_windows,
             commands::list_monitors,
             commands::set_container_window_pinned,
             commands::restore_container_mouse_interaction,
+            commands::has_container_mouse_interaction_blocked,
             commands::reveal_container_window_dock,
             commands::dock_container_window,
             commands::get_wallpaper_dominant_color,
             commands::show_quick_launch,
+            commands::show_settings_window,
             commands::pick_shortcut_path,
             commands::pick_background_media,
             commands::delete_background_asset,
@@ -212,6 +232,12 @@ pub fn run() {
             everything_ipc::detect_everything,
             everything_ipc::search_everything,
         ])
-        .run(tauri::generate_context!())
-        .expect("DeskBox 启动失败");
+        .build(tauri::generate_context!())
+        .expect("DeskBox 初始化失败")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let _ = app.state::<DataState>().flush(app);
+                let _ = container_windows::flush(app);
+            }
+        });
 }

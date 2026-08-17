@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { searchDeskBox, type SearchResult } from "../data/search";
+import type { CalculationResult } from "../data/calculator";
 import { useDeskBox } from "../hooks/useDeskBox";
 import { platform } from "../services/platform";
 import { appWindowStore } from "../stores/useAppStore";
@@ -16,13 +17,30 @@ export function QuickLauncher() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [systemApps, setSystemApps] = useState<SystemAppCatalogItem[]>([]);
   const [files, setFiles] = useState<EverythingSearchItem[]>([]);
+  const [calculation, setCalculation] = useState<CalculationResult | null>(null);
+  const [pinyinResolver, setPinyinResolver] = useState<((value: string) => string[]) | null>(null);
   const [searchStatus, setSearchStatus] = useState<string | null>(null);
   const [editingAliases, setEditingAliases] = useState<SearchResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
-  const results = useMemo(() => data ? searchDeskBox(data, query, 60, { systemApps, everything: files }) : [], [data, query, systemApps, files]);
+  const looksLikeExpression = /^\s*[-+]?\d/.test(query) && (/[-+*/%^()]|\s(?:to|in)\s/i.test(query) || /\d\s*[a-zA-Z]/.test(query));
+  const results = useMemo(() => data ? searchDeskBox(data, query, 60, { systemApps, everything: files, calculation: looksLikeExpression ? calculation : null, pinyinTokens: pinyinResolver ?? undefined }) : [], [calculation, data, files, looksLikeExpression, pinyinResolver, query, systemApps]);
 
-  useEffect(() => { setActiveIndex(0); }, [query, systemApps, files]);
+  useEffect(() => { setActiveIndex(0); }, [query, systemApps, files, calculation]);
+  useEffect(() => {
+    if (!looksLikeExpression) { setCalculation(null); return; }
+    let cancelled = false;
+    void import("../data/calculator").then(({ calculate }) => {
+      if (!cancelled) setCalculation(calculate(query.trim()));
+    });
+    return () => { cancelled = true; };
+  }, [looksLikeExpression, query]);
+  useEffect(() => {
+    if (!query.trim() || pinyinResolver) return;
+    let cancelled = false;
+    void import("../data/pinyin").then(({ pinyinTokens }) => { if (!cancelled) setPinyinResolver(() => pinyinTokens); });
+    return () => { cancelled = true; };
+  }, [pinyinResolver, query]);
   useEffect(() => { void platform.getSystemAppCatalog().then(setSystemApps).catch((error) => setSearchStatus(`应用目录不可用：${String(error)}`)); }, []);
   useEffect(() => {
     if (!data?.settings.everything.enabled) { setFiles([]); return; }
@@ -104,7 +122,7 @@ export function QuickLauncher() {
   const place = async (result: SearchResult, containerId: string) => {
     if ((result.kind === "systemApp" || result.kind === "externalFile") && !result.available) throw new Error("该外部项目当前不可用");
     if (result.kind === "shortcut") await actions.moveShortcut(result.shortcut.id, containerId);
-    else if (result.kind === "systemApp") await actions.addShortcut(containerId, result.title, result.item.target, { targetType: result.item.targetType, sourcePath: result.item.sourcePath, icon: result.item.icon });
+    else if (result.kind === "systemApp") await actions.addShortcut(containerId, result.title, result.item.target, { targetType: result.item.targetType, sourcePath: result.item.sourcePath });
     else if (result.kind === "externalFile") await actions.addShortcut(containerId, result.title, result.item.path, { targetType: "path", sourcePath: result.item.path });
   };
 

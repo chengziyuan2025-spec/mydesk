@@ -4,7 +4,7 @@ export const createId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 export const createDefaultData = (): AppData => ({
-  version: 5,
+  version: 6,
   revision: 0,
   containers: [{
     id: "sample-container",
@@ -23,7 +23,7 @@ export const createDefaultData = (): AppData => ({
     autoCollect: true,
     deleteSource: false,
     defaultContainerId: "sample-container",
-    hotkeys: { mainWindow: "Ctrl+Shift+H", quickLaunch: "Alt+Space", toggleContainers: null },
+    hotkeys: { mainWindow: "Ctrl+Shift+H", quickLaunch: "Alt+Space", toggleContainers: "Ctrl+Shift+D", settings: "Ctrl+Shift+Comma" },
     everything: { enabled: false, executablePath: null },
   },
   externalLauncherEntries: [],

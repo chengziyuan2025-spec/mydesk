@@ -88,6 +88,7 @@ export interface Settings {
     mainWindow: string | null;
     quickLaunch: string | null;
     toggleContainers: string | null;
+    settings: string | null;
   };
   everything: {
     enabled: boolean;
@@ -125,7 +126,7 @@ export interface EverythingSearchItem {
   isDirectory: boolean;
 }
 
-export type HotkeyAction = "mainWindow" | "quickLaunch" | "toggleContainers" | `container:${string}`;
+export type HotkeyAction = "mainWindow" | "quickLaunch" | "toggleContainers" | "settings" | `container:${string}`;
 export interface HotkeyStatus {
   action: HotkeyAction;
   accelerator: string | null;
@@ -153,7 +154,7 @@ export interface ContainerTrashEntry extends TrashBase {
 export type TrashEntry = ShortcutTrashEntry | ContainerTrashEntry;
 
 export interface AppData {
-  version: 5;
+  version: 6;
   revision: number;
   containers: ContainerItem[];
   settings: Settings;
@@ -175,7 +176,6 @@ export type AppOperation =
   | { type: "deleteContainer"; containerId: string; trashId: string; deletedAt: number }
   | { type: "reorderContainer"; containerId: string; beforeContainerId: string | null }
   | { type: "addShortcut"; containerId: string; shortcut: ShortcutItem }
-  | { type: "updateShortcutIcon"; shortcutId: string; icon: string }
   | { type: "setShortcutLauncherMeta"; shortcutId: string; aliases: string[]; favorite: boolean }
   | { type: "setContainerLauncherMeta"; containerId: string; aliases: string[]; favorite: boolean }
   | { type: "recordContainerOpened"; containerId: string; openedAt: number }

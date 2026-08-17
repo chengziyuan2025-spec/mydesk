@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { EyeOff, ExternalLink, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import type { ContainerItem } from "../types";
 import { IconButton } from "./IconButton";
@@ -12,7 +12,7 @@ interface ContainerCardProps {
   onTogglePinned: () => void;
 }
 
-export function ContainerCard(props: ContainerCardProps) {
+export const ContainerCard = memo(function ContainerCard(props: ContainerCardProps) {
   const { container } = props;
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(container.name);
@@ -80,4 +80,4 @@ export function ContainerCard(props: ContainerCardProps) {
       </div>
     </article>
   );
-}
+}, (previous, next) => previous.container === next.container);

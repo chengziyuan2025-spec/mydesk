@@ -165,15 +165,6 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
                 .ok_or_else(|| AppError::Message("容器不存在".to_string()))?;
             container.shortcuts.push(shortcut);
         }
-        AppOperation::UpdateShortcutIcon { shortcut_id, icon } => {
-            let shortcut = data
-                .containers
-                .iter_mut()
-                .flat_map(|item| &mut item.shortcuts)
-                .find(|item| item.id == shortcut_id)
-                .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
-            shortcut.icon = Some(icon);
-        }
         AppOperation::DeleteShortcut {
             container_id,
             shortcut_id,
@@ -204,6 +195,9 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
             target_container_id,
             before_shortcut_id,
         } => {
+            if !data.containers.iter().any(|container| container.id == target_container_id) {
+                return Err(AppError::Message("目标容器不存在".to_string()));
+            }
             let mut moved = None;
             for container in &mut data.containers {
                 if let Some(index) = container
@@ -220,7 +214,7 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
                 .containers
                 .iter_mut()
                 .find(|item| item.id == target_container_id)
-                .ok_or_else(|| AppError::Message("目标容器不存在".to_string()))?;
+                .expect("target container validated above");
             let index = before_shortcut_id
                 .and_then(|id| target.shortcuts.iter().position(|item| item.id == id))
                 .unwrap_or(target.shortcuts.len());

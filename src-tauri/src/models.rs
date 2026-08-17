@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_DATA_VERSION: u32 = 5;
+pub const CURRENT_DATA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +33,7 @@ pub struct ShortcutItem {
     pub favorite: bool,
     #[serde(default)]
     pub source_path: Option<String>,
+    #[serde(default)]
     pub icon: Option<String>,
     pub created_at: u64,
     #[serde(default)]
@@ -78,6 +79,8 @@ pub struct ContainerItem {
 
 fn default_main_hotkey() -> Option<String> { Some("Ctrl+Shift+H".to_string()) }
 fn default_quick_hotkey() -> Option<String> { Some("Alt+Space".to_string()) }
+fn default_toggle_hotkey() -> Option<String> { Some("Ctrl+Shift+D".to_string()) }
+fn default_settings_hotkey() -> Option<String> { Some("Ctrl+Shift+Comma".to_string()) }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -86,12 +89,14 @@ pub struct GlobalHotkeys {
     pub main_window: Option<String>,
     #[serde(default = "default_quick_hotkey")]
     pub quick_launch: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_toggle_hotkey")]
     pub toggle_containers: Option<String>,
+    #[serde(default = "default_settings_hotkey")]
+    pub settings: Option<String>,
 }
 
 impl Default for GlobalHotkeys {
-    fn default() -> Self { Self { main_window: default_main_hotkey(), quick_launch: default_quick_hotkey(), toggle_containers: None } }
+    fn default() -> Self { Self { main_window: default_main_hotkey(), quick_launch: default_quick_hotkey(), toggle_containers: default_toggle_hotkey(), settings: default_settings_hotkey() } }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -262,10 +267,6 @@ pub enum AppOperation {
     AddShortcut {
         container_id: String,
         shortcut: ShortcutItem,
-    },
-    UpdateShortcutIcon {
-        shortcut_id: String,
-        icon: String,
     },
     SetShortcutLauncherMeta { shortcut_id: String, aliases: Vec<String>, favorite: bool },
     SetContainerLauncherMeta { container_id: String, aliases: Vec<String>, favorite: bool },

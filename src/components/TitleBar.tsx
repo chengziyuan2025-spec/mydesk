@@ -2,7 +2,11 @@ import { Minus, X } from "lucide-react";
 import { platform } from "../services/platform";
 import { IconButton } from "./IconButton";
 
-export function TitleBar() {
+interface TitleBarProps {
+  onClose?: () => void;
+}
+
+export function TitleBar({ onClose }: TitleBarProps) {
   const startDragging = (event: React.MouseEvent<HTMLElement>) => {
     if (
       event.button !== 0 ||
@@ -17,25 +21,8 @@ export function TitleBar() {
     event.stopPropagation();
   };
 
-  const handleMinimize = async () => {
-    console.log("最小化按钮被点击");
-    try {
-      await platform.minimize();
-      console.log("最小化调用成功");
-    } catch (error) {
-      console.error("最小化失败:", error);
-    }
-  };
-
-  const handleClose = async () => {
-    console.log("关闭按钮被点击");
-    try {
-      await platform.close();
-      console.log("关闭调用成功，窗口将隐藏到托盘");
-    } catch (error) {
-      console.error("关闭失败:", error);
-    }
-  };
+  const handleMinimize = () => { void platform.minimize(); };
+  const handleClose = () => { if (onClose) onClose(); else void platform.close(); };
 
   return (
     <header className="titlebar" onMouseDown={startDragging}>

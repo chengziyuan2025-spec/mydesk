@@ -1,4 +1,4 @@
-import { Command, Eye, EyeOff, LayoutGrid, ListTree, MousePointer2, Plus, Search, Settings2, Trash2 } from "lucide-react";
+import { Command, Eye, LayoutGrid, ListTree, MousePointer2, Plus, Search, Settings2, Trash2 } from "lucide-react";
 
 interface ToolbarProps {
   query: string;
@@ -12,9 +12,9 @@ interface ToolbarProps {
   onOpenSettings: () => void;
   onOpenTrash: () => void;
   onOpenQuickLaunch: () => void;
-  onShowAll: () => void;
-  onHideAll: () => void;
+  onToggleAll: () => void;
   onRestoreInteraction: () => void;
+  restoreInteractionAvailable: boolean;
 }
 
 export function Toolbar(props: ToolbarProps) {
@@ -33,9 +33,8 @@ export function Toolbar(props: ToolbarProps) {
         <button type="button" className="icon-command" aria-label="快速启动" onClick={props.onOpenQuickLaunch} title="快速启动"><Command size={18} /><span>Alt Space</span></button>
         <button type="button" className="icon-command icon-command--badge" aria-label={`回收站，${props.trashCount} 个项目`} onClick={props.onOpenTrash} title="回收站"><Trash2 size={18} />{props.trashCount > 0 && <em aria-hidden="true">{props.trashCount}</em>}</button>
         <button type="button" className="icon-command" aria-label="设置" onClick={props.onOpenSettings} title="设置"><Settings2 size={18} /></button>
-        <button type="button" className="icon-command" aria-label="显示全部容器" onClick={props.onShowAll} title="显示全部容器"><Eye size={18} /></button>
-        <button type="button" className="icon-command" aria-label="隐藏全部容器" onClick={props.onHideAll} title="隐藏全部容器"><EyeOff size={18} /></button>
-        <button type="button" className="icon-command" aria-label="恢复悬浮窗鼠标交互" onClick={props.onRestoreInteraction} title="恢复鼠标交互"><MousePointer2 size={18} /></button>
+        <button type="button" className="icon-command" aria-label="显示或隐藏全部容器" onClick={props.onToggleAll} title="显示或隐藏全部容器 Ctrl+Shift+D"><Eye size={18} /></button>
+        {props.restoreInteractionAvailable && <button type="button" className="icon-command" aria-label="恢复悬浮窗鼠标交互" onClick={props.onRestoreInteraction} title="恢复鼠标交互 Ctrl+Shift+M"><MousePointer2 size={18} /></button>}
         <button type="button" className="button button--primary button--icon-command" onClick={props.onAddContainer}><Plus size={18} strokeWidth={1.7} /><span>新建容器</span></button>
       </div>
     </div>

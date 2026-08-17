@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { DatabaseBackup, Download, Eye, FolderOpen, ImagePlus, Keyboard, MonitorCog, Moon, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Sun, Upload, X } from "lucide-react";
+import { ArrowLeft, DatabaseBackup, Download, Eye, FolderOpen, ImagePlus, Keyboard, MonitorCog, Moon, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Sun, Upload, X } from "lucide-react";
 import type { AppData, BackgroundSettings, HotkeyAction, HotkeyStatus, Settings, Theme } from "../types";
 import { platform, type EverythingDetection } from "../services/platform";
-import { Modal } from "./Modal";
 
 interface SettingsPanelProps {
   data: AppData;
@@ -12,10 +11,12 @@ interface SettingsPanelProps {
   onImport: () => void;
   onOpenBackupDirectory: () => void;
   onNotify: (message: string, type: "success" | "error" | "info") => void;
-  onClose: () => void;
+  onBack: () => void;
 }
 
-export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, onImport, onOpenBackupDirectory, onNotify, onClose }: SettingsPanelProps) {
+type SettingsSection = "appearance" | "hotkeys" | "automation" | "workspaces" | "searchData";
+
+export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, onImport, onOpenBackupDirectory, onNotify, onBack }: SettingsPanelProps) {
   const settings = data.settings;
   const hidden = data.containers.filter((container) => container.hidden);
   const patch = (value: Partial<Settings>) => onChange({ ...settings, ...value });
@@ -23,6 +24,7 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
   const [hotkeyStatuses, setHotkeyStatuses] = useState<HotkeyStatus[]>([]);
   const [hotkeyError, setHotkeyError] = useState<Record<string, string>>({});
   const [everything, setEverything] = useState<EverythingDetection | null>(null);
+  const [section, setSection] = useState<SettingsSection>("appearance");
   const backgroundUrl = platform.backgroundUrl(settings.appearance.background.assetPath);
   const accentValue = settings.appearance.accentColor ?? (settings.theme === "dark" ? "#ef7557" : "#dc5a3c");
   const accentPresets = ["#dc5a3c", "#d34f70", "#8257d5", "#2879d0", "#138a72", "#b8781b"];
@@ -74,9 +76,27 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
     }}>{value ?? "未设置"}</button>{value && <button type="button" className="hotkey-clear" aria-label={`清除${label}`} onClick={() => void setHotkey(action, null)}><X size={14} /></button>}<em className={hotkeyError[action] || status?.state === "conflict" || status?.state === "invalid" ? "is-error" : ""}>{hotkeyError[action] || status?.message || (status?.state === "active" ? "已生效" : "点击后按下组合键")}</em></div>;
   };
 
+  const navigation: Array<{ id: SettingsSection; label: string; icon: typeof Palette }> = [
+    { id: "appearance", label: "外观", icon: Palette },
+    { id: "hotkeys", label: "快捷键", icon: Keyboard },
+    { id: "automation", label: "自动收纳", icon: MonitorCog },
+    { id: "workspaces", label: "工作区", icon: Eye },
+    { id: "searchData", label: "搜索与数据", icon: DatabaseBackup },
+  ];
+
   return (
-    <Modal title="设置" description="偏好设置会自动保存，并立即作用于当前窗口。" onClose={onClose}>
-      <div className="settings-list">
+    <section className="settings-window" aria-label="DeskBox 设置">
+      <aside className="settings-window__nav" aria-label="设置分类">
+        <div className="settings-window__brand"><strong>DeskBox</strong><span>设置</span></div>
+        {navigation.map((item) => {
+          const Icon = item.icon;
+          return <button key={item.id} type="button" className={section === item.id ? "is-active" : ""} onClick={() => setSection(item.id)}><Icon size={17} /><span>{item.label}</span></button>;
+        })}
+      </aside>
+      <div className="settings-window__content">
+        <header className="settings-window__header"><div className="settings-window__heading"><button type="button" className="settings-back" onClick={onBack}><ArrowLeft size={17} /><span>返回</span></button><div><h1>{navigation.find((item) => item.id === section)?.label}</h1><p>修改会立即应用到所有 DeskBox 窗口。</p></div></div></header>
+        <div className="settings-list">
+        {section === "appearance" && <>
         <section className="setting-row setting-row--stack">
           <div className="setting-copy">
             <span className="setting-icon"><MonitorCog size={19} strokeWidth={1.6} /></span>
@@ -113,7 +133,7 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
           <div className="appearance-background">
             <div className={`appearance-preview ${backgroundUrl ? "is-active" : ""}`}>
               {backgroundUrl && settings.appearance.background.kind === "image" && <img src={backgroundUrl} alt="当前背景预览" />}
-              {backgroundUrl && settings.appearance.background.kind === "video" && <video src={backgroundUrl} muted autoPlay loop playsInline />}
+              {backgroundUrl && settings.appearance.background.kind === "video" && <video src={backgroundUrl} muted preload="metadata" playsInline />}
               {!backgroundUrl && <span>未设置背景</span>}
               {backgroundUrl && <em>{settings.appearance.background.assetName ?? "当前背景"}</em>}
             </div>
@@ -130,15 +150,21 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
           </div>
           <label className="appearance-overlay"><span>{settings.appearance.background.overlay}%</span><input type="range" min="0" max="80" value={settings.appearance.background.overlay} onChange={(event) => void patchBackground({ overlay: Number(event.target.value) })} /></label>
         </section>
+        </>}
+        {section === "hotkeys" && <>
         <section className="setting-row setting-row--stack">
-          <div className="setting-copy"><span className="setting-icon"><Keyboard size={19} strokeWidth={1.6} /></span><div><strong>全局快捷键</strong><p>冲突时保留原快捷键，Backspace 可清除</p></div></div>
+          <div className="setting-copy"><span className="setting-icon"><Keyboard size={19} strokeWidth={1.6} /></span><div><strong>当前可用快捷键</strong><p>点击绑定后按下组合键；冲突会保留原设置。</p></div></div>
           <div className="hotkey-list">
             {hotkeyRow("mainWindow", "主窗口", settings.hotkeys.mainWindow)}
             {hotkeyRow("quickLaunch", "快速启动", settings.hotkeys.quickLaunch)}
             {hotkeyRow("toggleContainers", "显示 / 隐藏全部容器", settings.hotkeys.toggleContainers)}
+            {hotkeyRow("settings", "打开设置", settings.hotkeys.settings)}
             {data.containers.map((container) => hotkeyRow(`container:${container.id}`, `打开「${container.name}」`, container.hotkey))}
+            <div className="hotkey-row hotkey-row--reserved"><span>恢复鼠标交互</span><kbd>Ctrl+Shift+M</kbd><em>系统保留</em></div>
           </div>
         </section>
+        </>}
+        {section === "searchData" && <>
         <section className="setting-row setting-row--stack">
           <div className="setting-copy"><span className="setting-icon"><FolderOpen size={19} strokeWidth={1.6} /></span><div><strong>Everything 文件搜索</strong><p>{everything?.message ?? "正在检测 Everything"}</p></div></div>
           <div className="everything-settings">
@@ -157,6 +183,19 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
           </div>
           {settings.everything.enabled && !settings.everything.executablePath && <p className="setting-warning">未找到 Everything.exe；文件搜索会保持禁用，其他搜索不受影响。</p>}
         </section>
+        <section className="setting-row setting-row--stack">
+          <div className="setting-copy">
+            <span className="setting-icon"><DatabaseBackup size={19} strokeWidth={1.6} /></span>
+            <div><strong>数据管理</strong><p>每日自动保留最近 7 份本地备份</p></div>
+          </div>
+          <div className="data-actions">
+            <button type="button" className="button button--ghost" onClick={onExport}><Download size={16} />导出</button>
+            <button type="button" className="button button--ghost" onClick={onImport}><Upload size={16} />导入</button>
+            <button type="button" className="button button--ghost" onClick={onOpenBackupDirectory}><FolderOpen size={16} />备份目录</button>
+          </div>
+        </section>
+        </>}
+        {section === "automation" && <>
         <section className="setting-row">
           <div className="setting-copy">
             <span className="setting-index">01</span>
@@ -177,17 +216,6 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
             <button type="button" disabled={!settings.autoCollect} className={settings.deleteSource ? "is-active" : ""} onClick={() => void patch({ deleteSource: true })}>移至回收站</button>
           </div>
         </section>
-        <section className="setting-row setting-row--stack">
-          <div className="setting-copy">
-            <span className="setting-icon"><DatabaseBackup size={19} strokeWidth={1.6} /></span>
-            <div><strong>数据管理</strong><p>每日自动保留最近 7 份本地备份</p></div>
-          </div>
-          <div className="data-actions">
-            <button type="button" className="button button--ghost" onClick={onExport}><Download size={16} />导出</button>
-            <button type="button" className="button button--ghost" onClick={onImport}><Upload size={16} />导入</button>
-            <button type="button" className="button button--ghost" onClick={onOpenBackupDirectory}><FolderOpen size={16} />备份目录</button>
-          </div>
-        </section>
         <section className={`setting-row ${!settings.autoCollect ? "is-disabled" : ""}`}>
           <div className="setting-copy">
             <span className="setting-index">03</span>
@@ -202,6 +230,8 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
             {data.containers.map((container) => <option value={container.id} key={container.id}>{container.name}{container.hidden ? "（已隐藏）" : ""}</option>)}
           </select>
         </section>
+        </>}
+        {section === "workspaces" && <>
         {hidden.length > 0 && (
           <section className="hidden-containers">
             <header><div><Eye size={18} strokeWidth={1.6} /><strong>已隐藏容器</strong></div><span>{hidden.length}</span></header>
@@ -214,7 +244,10 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
             </div>
           </section>
         )}
+        {!hidden.length && <div className="settings-empty">当前没有隐藏的工作区。</div>}
+        </>}
       </div>
-    </Modal>
+      </div>
+    </section>
   );
 }

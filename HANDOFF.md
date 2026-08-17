@@ -1,759 +1,207 @@
 # DeskBox 项目交接文档
 
-> 文档日期：2026-08-16
-> 当前版本：0.3.0（数据格式 v5）
-> 项目路径：`E:\vibecoding\hoverDesk`
-> 最新交接：优先阅读第 22 章“DeskBox 外观自定义”
+> 更新日期：2026-08-17
+>
+> 应用版本：0.3.0
+>
+> 数据格式：v6
+>
+> 仓库：`https://github.com/chengziyuan2025-spec/mydesk`
 
-## 1. 项目概况
+## 1. 项目定位
 
-DeskBox 是一个面向 Windows 的桌面快捷方式收纳工具。应用使用 Tauri v2 提供窗口、托盘、全局快捷键、文件系统监听和本地文件操作，使用 React 18 + TypeScript 实现界面和业务状态。
+DeskBox 是 Windows 桌面快捷方式收纳工具。主页负责容器管理、整理、搜索和设置；每个容器可以打开一个独立悬浮工作区。Tauri 负责原生窗口、文件系统、托盘、快捷键和持久化，React 负责界面与乐观状态。
 
-0.2.0 已完成快速启动、应用内拖拽整理、Windows 原生文件拖入、持久回收站、单实例、数据迁移与备份。规则分类等增强功能尚未实现。
+当前重点已经从“补齐基础能力”转为“稳定多窗口交互和大数据量性能”。本轮完成了设置页内嵌、悬浮窗关闭前保存、缩放卡死修复、贴边隐藏恢复，以及操作级跨窗口同步。
 
-## 2. 技术栈与运行环境
+## 2. 技术栈
 
-| 模块 | 技术 |
+| 层 | 技术 |
 | --- | --- |
-| 桌面框架 | Tauri 2.11.x |
-| 前端 | React 18.3、TypeScript 5.7、Vite 6.4 |
-| 图标组件 | lucide-react |
-| Rust edition | 2021 |
-| 文件监听 | notify 8 |
-| 文件选择 | rfd 0.15 |
-| 源文件回收 | trash 5 |
-| 数据格式 | 本地 JSON |
+| 桌面运行时 | Tauri v2、Rust 2021 |
+| 前端 | React 18、TypeScript 5.7、Vite 6 |
+| 状态 | Zustand 5、操作归约、乐观更新 |
+| 拖拽/虚拟化 | dnd-kit、react-window |
+| 搜索 | pinyin-pro、mathjs、Everything Query2 IPC |
+| Windows API | windows-rs、ShellExecute、IShellLink、IDesktopWallpaper |
+| 存储 | 本地 JSON、原子替换、延迟落盘与轮转备份 |
 
-已验证环境：Windows、Node.js 24.18、npm 11.16、Rust/Cargo 1.96。开发机需要安装 Microsoft Edge WebView2 Runtime。
+运行要求：Windows 10/11、WebView2 Runtime、Node.js 20+、Rust stable 和 Visual Studio C++ Build Tools。
 
-## 3. 功能完成情况
-
-### 3.1 已完成
-
-- 透明无边框主控台窗口，顶部标题栏通过 Tauri `startDragging()` 手动拖动。
-- 每个容器拥有独立的无边框、透明、置顶悬浮窗口；可在桌面拖动、移动和调整大小。
-- 悬浮窗口会记住各自的位置与尺寸；关闭或系统关闭请求均只隐藏窗口，不退出程序。
-- 主界面完整贴合原生窗口边缘，无额外透明外边距。
-- `Ctrl+Shift+H` 全局显示/隐藏主窗口。
-- 系统托盘显示/隐藏和退出菜单。
-- 关闭窗口时隐藏到托盘，进程继续运行。
-- 创建、显式按钮或双击重命名、隐藏、恢复和确认删除容器。
-- 主页只显示容器概览；点击容器卡片会创建或显示其对应的悬浮工作区。
-- 悬浮工作区显示容器快捷方式，支持添加、启动、右键定位/删除和原地重命名容器。
-- 添加快捷方式，支持名称、路径和 Windows 文件选择框。
-- 单击启动程序/打开路径。
-- 快捷方式右键菜单：删除、在文件管理器中定位。
-- Windows 关联图标提取、磁盘缓存和数据回填。
-- 监听桌面中新建的 `.lnk` 和 `.exe` 文件。
-- 自动放入默认容器，并过滤重复路径和连续重复事件。
-- 自动收纳后保留源文件或移入系统回收站。
-- 亮色/暗色主题、自动收纳开关、源文件处理和默认容器设置。
-- 隐藏容器在设置面板中可恢复。
-- 所有增删改操作防抖自动保存，并通过 `app-data-changed` 事件同步到其他窗口。
-- 首次启动创建“示例”容器以及“计算器”“记事本”快捷方式。
-- 数据文件损坏时备份为 `deskbox-data.corrupt.json`，随后恢复默认数据。
-- 浏览器开发模式使用 `localStorage`，可脱离 Tauri 调试界面。
-- 主界面快捷方式搜索。
-- 所有独立悬浮容器支持从 Windows 资源管理器原生拖入 EXE、LNK、文件夹、普通文件和多选路径。
-- 悬浮容器通过 DOM 事件尽力接收浏览器地址栏拖出的 HTTP(S) URL；文件拖入只由 Tauri 原生事件处理，避免重复添加。
-- `.lnk` 使用 Windows `IShellLinkW + IPersistFile` 解析目标、参数和工作目录；启动时使用 `ShellExecuteW` 分别传递这些字段。
-- 外部拖入支持目标去重、逐项容错、结果汇总、无布局偏移的拖入覆盖提示和可选 `onBeforeAdd` 回调。
-
-### 3.2 部分完成
-
-- 快速搜索已集成主页和 `Alt+Space` 独立窗口；当前不支持拼音索引或任意系统命令。
-- 非 Windows 平台保留了部分 `xdg-open` 降级逻辑，但图标提取、托盘和整体体验仅在 Windows 验证。
-- 文件夹路径可以手动输入并打开，但当前选择对话框主要用于选择文件。
-
-### 3.3 尚未实现
-
-- 规则自动分类。
-- 开机自启动。
-- 悬浮窗透明度、鼠标穿透、边缘吸附和场景切换。
-
-## 4. 目录结构
+## 3. 架构与所有权
 
 ```text
-hoverDesk/
-├─ public/                         浏览器静态资源
-├─ src/
-│  ├─ components/                 React 界面组件和弹层
-│  │  ├─ FloatingContainer.tsx    容器独立悬浮工作区
-│  ├─ data/defaults.ts            浏览器模式默认数据与 ID 生成
-│  ├─ hooks/useDeskBox.ts          核心状态、自动保存和桌面事件编排
-│  ├─ services/platform.ts         Tauri/浏览器平台适配层
-│  ├─ stores/useAppStore.ts        已打开容器窗口的前端请求状态
-│  ├─ App.tsx                      页面组合与弹层路由
-│  ├─ styles.css                   全局主题、布局和响应式样式
-│  └─ types.ts                     前端数据类型
-├─ src-tauri/
-│  ├─ capabilities/default.json   Tauri 权限声明
-│  ├─ icons/                       应用图标和安装包图标
-│  ├─ src/
-│  │  ├─ commands.rs              前端可调用的系统命令
-│  │  ├─ container_windows.rs     动态容器窗口、关闭行为和布局持久化
-│  │  ├─ icons.rs                 Windows 图标提取与缓存
-│  │  ├─ lib.rs                   Tauri 启动、托盘、热键和窗口事件
-│  │  ├─ models.rs                Rust 持久化数据模型
-│  │  ├─ storage.rs               数据读取、备份和保存
-│  │  └─ watcher.rs               桌面文件夹监听
-│  ├─ Cargo.toml
-│  └─ tauri.conf.json
-├─ package.json
-├─ README.md                       快速使用说明
-└─ HANDOFF.md                      本交接文档
+React 窗口（main / quick-launch / container-*）
+  -> useDeskBox：加载、乐观更新、通知、跨窗口版本同步
+  -> platform.ts：Tauri invoke/listen 与浏览器降级
+  -> Rust commands.rs：命令边界和输入校验
+  -> DataState / container_windows：业务数据与窗口布局
+  -> storage.rs：原子写入、迁移和备份
 ```
 
-## 5. 关键架构与数据流
+关键文件：
 
-前端以 `useDeskBox` 为唯一业务状态入口。组件只接收数据和操作回调，不直接调用 Tauri 命令。
+- `src/App.tsx`：根据窗口 label 选择主页、快速启动或悬浮工作区；主页设置路由也在这里。
+- `src/components/FloatingContainer.tsx`：悬浮工具栏、设置面板、拖放、贴边恢复和重新隐藏计时器。
+- `src/components/SettingsPanel.tsx`：主页和悬浮工作区共用的设置视觉与控件。
+- `src/hooks/useDeskBox.ts`：业务操作入口、乐观状态及 `app-data-changed` 同步。
+- `src/stores/useDeskBoxStore.ts`：Zustand 状态，减少多组件无关重渲染。
+- `src/data/operations.ts`：前端操作归约，必须与 Rust `operations.rs` 行为一致。
+- `src/data/performance.ts`：长列表、搜索和虚拟化阈值配置。
+- `src/components/VirtualGrid.tsx`：大量快捷方式时的网格虚拟化。
+- `src/services/platform.ts`：所有原生能力的统一前端接口；组件不应散落直接 `invoke`。
+- `src-tauri/src/app_state.rs`：内存中的权威数据、revision 和延迟持久化。
+- `src-tauri/src/container_windows.rs`：窗口创建、显示、隐藏、几何、停靠和布局文件。
+- `src-tauri/src/models.rs` / `operations.rs`：Rust 数据模型、迁移目标和原子操作。
+- `src-tauri/src/storage.rs`：数据路径、原子写入、损坏恢复、每日/迁移/导入前备份。
+- `src-tauri/src/lib.rs`：应用启动、命令注册、托盘、单实例和退出 flush。
+
+## 4. 数据与持久化
+
+应用标识是 `com.deskbox.app`，Tauri 路径解析到应用专属目录。主要持久化内容：
+
+| 内容 | 位置 |
+| --- | --- |
+| 业务数据 | 应用数据目录 `deskbox-data.json` |
+| 悬浮窗布局 | 应用数据目录 `deskbox-container-windows.json` |
+| 自动备份 | 应用数据目录 `backups/` |
+| 背景资源 | 应用数据目录 `assets/` |
+| 图标缓存 | 应用缓存目录 `icons/` |
+
+业务数据当前为 v6，包含 `revision`、容器、设置、外部启动项和回收站。读取旧数据时由 Rust 迁移并补齐默认字段；更改模型时必须同步：
+
+1. `src/types.ts` 的 TypeScript 类型。
+2. `src/data/defaults.ts` 和浏览器归一化逻辑。
+3. `src-tauri/src/models.rs` 的 Rust 类型与版本迁移。
+4. 前后端操作归约及对应测试。
+
+写入使用临时文件加替换的原子方式。业务操作先提交内存并递增 revision，再延迟合并写盘；正常进程退出时强制 flush。导入、迁移和损坏恢复都有独立备份。
+
+背景资源导出 JSON 时不会打包二进制文件。跨机器导入后若资源路径不存在，会回退到普通背景，不影响其他配置。
+
+## 5. 跨窗口状态
+
+前端提交 `AppOperation`，Rust 在内存中应用操作并广播：
 
 ```text
-主页窗口 / 容器悬浮窗口
-   ↓
-useDeskBox（乐观状态、原子操作、通知、跨窗口刷新）
-   ↓
-platform.ts（Tauri/浏览器适配、窗口 API）
-   ↓ invoke / event
-commands.rs / container_windows.rs
-   ↓
-storage / icons / watcher / Windows 系统能力
+app-data-changed { revision, operation? }
 ```
 
-重要原则：
+接收窗口若 revision 正好连续，直接本地归约该操作；版本跳跃或没有操作负载时重新加载完整数据。这样既降低大 JSON 的广播与反序列化成本，也保证窗口失步后可以恢复。
 
-- Rust 的 `deskbox-data.json` 是权威业务状态；前端先乐观应用操作，再以 Rust 返回的最新 revision 校准。
-- 所有业务写入通过 `apply_app_operation` 在 Rust 互斥锁内读取、修改、备份和保存，不再由各窗口整包覆盖数据。
-- 原子操作完成后广播带 revision 的 `app-data-changed`；其他窗口只在事件版本更新时重新读取。
-- 动态窗口的真实生命周期由 Rust 管理；前端 `appWindowStore` 只避免同一渲染器重复请求。
-- 桌面监听器只发送 `desktop-file-created` 事件；归类、去重和保存由前端完成。
-- 浏览器模式不会启动本地程序或访问文件系统，仅用于界面调试。
+新增业务操作时，TypeScript 与 Rust 的枚举、序列化命名、归约结果和测试必须保持一致。不要绕过 `useDeskBox` 直接修改组件局部业务副本。
 
-## 6. 数据模型
+## 6. 设置界面
 
-```ts
-interface AppData {
-  version: 3;
-  revision: number;
-  containers: ContainerItem[];
-  settings: Settings;
-  trash: TrashEntry[];
-}
+主页设置不再使用单独的 Tauri 窗口。标题栏、托盘或全局设置快捷键触发 `open-settings`，主页切换到设置视图；返回按钮恢复之前页面，因此不存在两个关闭按钮或关不掉的独立设置窗口。
 
-interface ContainerItem {
-  id: string;
-  name: string;
-  hidden: boolean;
-  pinned: boolean; // 预留字段，当前没有置顶行为
-  shortcuts: ShortcutItem[];
-}
+悬浮工作区仍使用同一窗口内的锚定设置面板，以保持工作区上下文。它沿用主页设置的颜色、分组和控件风格，并支持以下关闭方式：
 
-interface ShortcutItem {
-  id: string;
-  name: string;
-  path: string;
-  source: "drag_drop" | "manual";
-  arguments: string | null;
-  workingDirectory: string | null;
-  icon: string | null; // 当前保存为 PNG data URI
-  createdAt: number;
-  launchCount: number;
-  lastLaunchedAt: number | null;
-}
+- 点击面板关闭按钮
+- 按 `Esc`
+- 点击面板外区域
 
-interface Settings {
-  theme: "light" | "dark";
-  autoCollect: boolean;
-  deleteSource: boolean;
-  defaultContainerId: string;
-}
-```
+改动设置 UI 时应同时检查主页宽屏、窄屏和悬浮窗口尺寸，避免只修一处样式。
 
-Windows 数据位置：
+## 7. 悬浮窗口生命周期
 
-- 主数据：`%APPDATA%\com.deskbox.app\deskbox-data.json`
-- 容器窗口布局：`%APPDATA%\com.deskbox.app\deskbox-container-windows.json`
-- 损坏数据备份：`%APPDATA%\com.deskbox.app\deskbox-data.corrupt.json`
-- 图标缓存：`%LOCALAPPDATA%\com.deskbox.app\icons`
-- WebView2 缓存：`%LOCALAPPDATA%\com.deskbox.app\EBWebView`
+窗口 label 为 `container-{id}`。主页点击容器时调用 `create_container_window`：已存在则恢复并显示，不存在则按保存布局创建。关闭请求会被拦截为隐藏，不销毁窗口、不删除容器。
 
-首次启动默认数据同时在 Rust 的 `models.rs` 和浏览器模式的 `src/data/defaults.ts` 中存在。修改初始化内容时需要同步更新两处。
+隐藏前会同步读取实际 `outer_position` / `outer_size` 并保存，再执行 hide。移动和缩放期间只更新内存，并经过防抖后写盘，避免 WebView2 高频事件造成主线程阻塞。退出应用时再次 flush。
 
-## 7. Tauri 命令与事件
+几何数据统一使用物理像素：
 
-| 命令/事件 | 方向 | 作用 |
-| --- | --- | --- |
-| `load_app_data` | 前端 → Rust | 读取或初始化 JSON 数据 |
-| `apply_app_operation` | 前端 → Rust | 在后端原子执行增量业务操作并返回最新 AppData |
-| `launch_shortcut` | 前端 → Rust | 按 ID 启动并原子更新最近使用与次数 |
-| `show_quick_launch` | 前端 → Rust | 显示并聚焦快速启动窗口 |
-| `export_backup` / `import_backup` | 前端 → Rust | 导出或验证、迁移并导入 JSON 备份 |
-| `open_backup_directory` | 前端 → Rust | 打开每日备份目录 |
-| `create_container_window` | 前端 → Rust | 创建或显示 `container-{id}` 悬浮窗口 |
-| `hide_container_window` | 前端 → Rust | 隐藏指定容器窗口 |
-| `pick_shortcut_path` | 前端 → Rust | 打开 Windows 文件选择框 |
-| `extract_icon` | 前端 → Rust | 提取并缓存关联图标，返回 data URI |
-| `resolve_shortcut` | 前端 → Rust | 通过 Windows Shell COM 解析 `.lnk` 的目标、参数和工作目录 |
-| `is_directory` | 前端 → Rust | 判断拖入的绝对路径是否为目录 |
-| `get_file_name` | 前端 → Rust | 获取拖入路径的末级完整文件名 |
-| `launch_path` | 前端 → Rust | 启动程序或打开路径 |
-| `reveal_in_explorer` | 前端 → Rust | 在文件管理器中定位目标 |
-| `configure_desktop_watcher` | 前端 → Rust | 启用或停止桌面监听 |
-| `recycle_source` | 前端 → Rust | 将桌面源文件移入系统回收站 |
-| `desktop-file-created` | Rust → 前端 | 报告新出现的 `.lnk`/`.exe` 路径 |
-| `app-data-changed` | Rust → 前端 | 携带最新 revision，通知其他窗口按需刷新 |
+- 使用 `PhysicalPosition` / `PhysicalSize` 创建和恢复。
+- 不要把前端 CSS 像素或 logical size 直接写进布局文件。
+- 恢复时按 `monitorKey` 选择显示器，并约束到当前 work area。
+- 显示器移除、DPI 改变或分辨率变化后，旧坐标会被修正到可见区域。
 
-## 8. 开发、检查与打包
+悬浮窗口刻意不启用 Tauri `transparent` 原生透明合成。视觉透明度由窗口 opacity 和页面样式完成；重新开启原生透明窗口会让 Windows/WebView2 在连续 resize 时出现冻结风险。
 
-首次安装：
+## 8. 贴边隐藏与恢复
 
-```powershell
-npm install
-```
+`autoHide` 开启时，窗口拖到当前显示器左/右工作区边缘会进入 dock 状态，并只保留约 10px 的热区。`docked` 和 `dockSide` 与几何一起持久化。
 
-启动完整桌面应用：
+恢复路径有三种：
 
-```powershell
-npm run tauri dev
-```
+- 鼠标进入屏幕边缘热区，调用 `reveal_container_window_dock`。
+- 从主页再次点击该容器。
+- 使用容器或全部工作区快捷键显示。
 
-只启动 React 界面：
+从主页或快捷键显式打开时必须主动展开，不能只显示仍处于屏幕外的隐藏坐标。鼠标离开展开窗口约 1 秒且没有按压/拖动时，调用 `dock_container_window` 再次隐藏。
 
-```powershell
-npm run dev
-```
+Dock 状态下临时关闭鼠标穿透，让热区可接收输入；展开后恢复用户配置。程序性 reveal 也会触发 `Moved`，状态机必须区分它与用户再次拖到边缘，否则窗口会立即重新隐藏。
 
-完整编译检查：
+## 9. 窗口选项
+
+每个容器独立保存：显示器、位置、尺寸、折叠高度、锁定、透明度、鼠标穿透、吸附边、自动隐藏、停靠边、布局、任务栏显示和全部虚拟工作区可见。
+
+透明度更新走专用轻量命令，不应重设位置或完整重建窗口。锁定只控制移动/缩放交互，不应阻塞关闭和设置。鼠标穿透开启后，需要依赖全局恢复入口，避免所有窗口永久无法点击。
+
+## 10. 搜索与性能
+
+搜索覆盖 DeskBox 项目、容器、系统应用、Everything 文件和离线计算。拼音索引使用 `pinyin-pro`，支持中文全拼和首字母。外部路径只能通过类型化启动接口打开，禁止把搜索输入作为 shell 命令执行。
+
+性能策略：
+
+- 业务变化使用小型 `AppOperation`，避免每次保存整份 JSON 并全窗口广播。
+- Rust 内存状态是权威源，磁盘写入防抖合并。
+- Zustand selector 让组件只订阅需要的数据。
+- 大量快捷方式使用 `react-window` 虚拟网格。
+- 搜索索引、图标和派生结果尽量复用缓存。
+
+调整阈值或虚拟化布局后，应同时测试少量数据和大列表，尤其关注拖拽目标、右键菜单定位和动态窗口宽度。
+
+## 11. 常用命令与事件
+
+窗口相关命令包括：创建/隐藏容器窗口、显示/隐藏/切换全部窗口、读取/更新窗口配置、单独更新透明度、列出显示器、恢复鼠标交互、Dock 展开/收起。
+
+数据与系统命令包括：加载数据、应用操作、启动/定位目标、解析 `.lnk`、图标提取、桌面监听、隐藏/恢复源文件、导入导出、背景资源和壁纸主色。
+
+主要事件：
+
+- `app-data-changed`：业务数据 revision/操作同步
+- `desktop-entry-created`：桌面监听产生新项目
+- `open-settings`：让主页进入设置视图
+- `quick-launch-reset`：快速启动窗口每次显示时重置输入
+
+新增命令后必须在 `src-tauri/src/lib.rs` 的 `generate_handler!` 注册，并在 `platform.ts` 封装。
+
+## 12. 验证与发布
+
+日常完整检查：
 
 ```powershell
 npm run check
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+git diff --check
 ```
 
-生成 Windows 安装包：
+发布构建：
 
 ```powershell
 npm run tauri build
 ```
 
-产物目录：`src-tauri/target/release/bundle`。
-
-如果需要删除 `node_modules`，必须先通过托盘退出 DeskBox，并停止 Vite/Tauri 开发进程，否则 Windows 可能因文件句柄占用而报 `EBUSY`：
-
-```powershell
-Remove-Item -LiteralPath .\node_modules -Recurse -Force
-npm install
-```
-
-保留 `package.json` 和 `package-lock.json`。
-
-## 9. 已完成的验证
-
-截至 2026-08-16，完成以下验证：
-
-- `npm run build`：通过。
-- `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
-- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过，零警告。
-- Tauri Windows 开发版实机启动：通过。
-- 首次启动 JSON 数据创建：通过。
-- 计算器和记事本图标提取、缓存、数据回填：通过。
-- 发送窗口关闭消息后进程继续存活、窗口隐藏：通过。
-- `Ctrl+Shift+H` 从隐藏状态重新显示窗口：通过。
-- Playwright 验证创建容器、打开设置、切换暗色主题：通过。
-- 1036px 桌面布局和 390px 窄屏布局截图检查：无文字溢出或控件遮挡。
-- 移除窗口四周 12px 透明空隙后重新构建：通过。
-- 多窗口架构：`npm run check`、`cargo clippy -- -D warnings` 通过。
-- Playwright：主页容器概览、悬浮工作区、添加快捷方式弹层和容器重命名流程通过。
-- 原生拖放改动：`npm run check` 通过，当前包含 9 个 Vitest 测试和 12 个 Rust 测试。
-- Rust 临时创建真实 `.lnk` 后成功解析目标、参数和工作目录。
-- Windows 原生窗口自动化验证：工作区“1”首次打开成功；最小化后再次点击卡片可恢复为可见且非最小化状态。
-
-Playwright 临时产物位于 `output/playwright`，该目录已被 `.gitignore` 忽略。
-
-## 10. 已知风险与注意事项
-
-### 10.1 桌面文件事件兼容
-
-监听器当前只处理 `notify::EventKind::Create`。部分软件把文件先写入临时目录再重命名或移动到桌面，此时 Windows 可能产生 Rename 事件而不是 Create，自动收纳可能漏掉。建议下一步同时处理目标位于桌面的 Rename/Modify 事件，并保留现有路径去重。
-
-### 10.2 多实例（已在 0.2.0 解决）
-
-已接入 Tauri single-instance 插件；第二实例会退出并唤醒主窗口。
-
-### 10.3 数据迁移（已在 0.2.0 解决）
-
-已建立 v1→v2 迁移器、迁移前备份和未来版本拒绝策略；新增版本必须继续采用逐版本迁移。
-
-### 10.4 图标缓存
-
-缓存键只基于路径的 SHA-256。同一路径程序升级并更换图标后不会自动失效。后续可以把文件修改时间或文件版本加入缓存键，并避免把完整 data URI 长期重复写入 JSON。
-
-### 10.5 安全配置
-
-`tauri.conf.json` 当前设置 `csp: null`，便于开发和显示 data URI 图标。正式发布前应配置最小 CSP，并复核 Tauri capability 权限范围。
-
-### 10.6 自动收纳删除行为
-
-“删除源文件”实际调用系统回收站，不是永久删除。文件仍在写入或被其他程序占用时，回收可能失败；前端会显示错误并保留源文件。
-
-### 10.7 自动化测试
-
-仓库已有 Vitest 与 Rust 单元测试，覆盖数据操作、v1/v2→v3 迁移、回收站嵌套快捷方式迁移、URL 解析、外部路径命名和去重、命令输入校验以及 `.lnk` 解析。原生 OLE 拖放仍需要 Windows 真实鼠标手工验收，浏览器地址栏 URL 拖入受 WebView2 数据转交行为限制，只能作为尽力功能。
-
-### 10.8 多窗口保存冲突（已在 0.2.0 解决）
-
-业务写入已统一通过 Rust `apply_app_operation` 在互斥锁内原子执行，并用递增 `revision` 防止窗口接收旧状态。
-
-## 11. 推荐后续迭代顺序
-
-1. 扩展桌面 Rename/Move 事件处理，并为事件去重添加测试。
-2. 收紧 CSP 和 Tauri capability，完成正式安装包测试。
-3. 增加开机自启动以及可配置全局快捷键。
-4. 实现规则分类和待整理收件箱。
-5. 增加悬浮窗透明度、鼠标穿透、边缘吸附和工作场景。
-
-## 12. 故障排查
-
-### 端口 1420 被占用
-
-先确认是否已经有 Vite/Tauri 开发进程运行：
-
-```powershell
-netstat -ano | Select-String ':1420'
-Get-CimInstance Win32_Process |
-  Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*hoverDesk*' } |
-  Select-Object ProcessId, CommandLine
-```
-
-只终止确认属于本项目的进程，不要批量结束系统中的所有 Node 进程。
-
-### 窗口关闭后找不到
-
-窗口关闭默认隐藏到托盘。使用 `Ctrl+Shift+H` 或托盘菜单“显示 / 隐藏”恢复。
-
-### 图标没有显示
-
-检查 `%LOCALAPPDATA%\com.deskbox.app\icons` 是否可写，并确认 PowerShell 和 `System.Drawing` 可用。删除单个缓存 PNG 后重启应用会重新提取缺失图标。
-
-### 数据无法恢复
-
-先备份 `%APPDATA%\com.deskbox.app`。应用检测到无效 JSON 时会保留 `.corrupt.json` 并恢复默认数据，旧内容需要从备份中人工修复。
-
-### 窗口顶部无法拖动
-
-当前实现不再使用 `data-tauri-drag-region`。排查时依次确认：
-
-1. `src-tauri/capabilities/default.json` 必须包含 `core:window:allow-start-dragging`。
-2. `TitleBar.tsx` 的 `<header>` 必须保留 `onMouseDown`，并调用 `platform.startDragging()`。
-3. `platform.ts` 中的 `startDragging()` 必须在 Tauri 环境调用 `getCurrentWindow().startDragging()`。
-4. 标题栏 CSS 不应添加 `pointer-events: none` 或 `-webkit-app-region: no-drag`。
-
-标题栏处理器只响应鼠标左键，并通过 `[data-window-control]` 排除最小化、隐藏和重命名控件。主页和悬浮窗口均使用这套手动拖拽逻辑。浏览器预览中 `platform.startDragging()` 会安全地空操作。
-
-### 容器悬浮窗口没有显示
-
-1. 在主页点击容器概览卡片；该操作会调用 `create_container_window`。
-2. 已存在但隐藏的窗口会被 Rust 端 `show()` 并聚焦，不会重复创建。
-3. 被移出可见屏幕时，先退出 DeskBox，然后备份并删除 `%APPDATA%\com.deskbox.app\deskbox-container-windows.json`，下次打开容器会采用默认位置。
-
-### 调试窗口显示 `ERR_CONNECTION_REFUSED`
-
-这表示 Tauri 调试进程仍在运行，但其开发地址 `http://127.0.0.1:1420` 对应的 Vite 服务已经退出。先运行：
-
-```powershell
-npm run dev
-```
-
-确认端口恢复后刷新 DeskBox 窗口。若窗口隐藏在托盘，使用 `Ctrl+Shift+H` 显示。不要重复启动多个 `deskbox.exe`，否则全局快捷键注册会报 `HotKey already registered`。
-
-## 13. 2026-08-16 窗口拖动修复记录
-
-本次对话专门排查并修复了无边框透明窗口无法拖动的问题。
-
-### 已确认的问题
-
-- `src-tauri/capabilities/default.json` 原先缺少 `core:window:allow-start-dragging`，已经补充。
-- 原来的声明式拖动属性虽然存在于 `<header>`、品牌容器和部分文字节点，但品牌图标内部的实际 DOM 节点没有全部带上属性，存在命中不稳定问题。
-- `src/styles.css` 未发现标题栏或父元素使用 `-webkit-app-region: no-drag`。
-- CSS 中的 `pointer-events: none` 只用于窗口边框伪元素、隐藏的开关输入和 Toast 容器，不会拦截标题栏鼠标事件。
-
-### 最终实现
-
-- `src/components/TitleBar.tsx` 已移除全部 `data-tauri-drag-region`。
-- 标题栏通过 React `onMouseDown` 调用 `platform.startDragging()`。
-- `src/services/platform.ts` 新增 `startDragging()`，桌面环境调用 `getCurrentWindow().startDragging()`。
-- 标题栏事件会过滤非左键以及来自窗口控制按钮的事件。
-- capability 中保留 `core:window:allow-start-dragging`，这是手动调用 Tauri API 所必需的权限。
-
-### 验证情况
-
-- `npm run check`：通过，包括 TypeScript、Vite 生产构建和 `cargo check`。
-- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过，零警告。
-- 新 capability 已被 Tauri schema 正确识别，调试二进制可以成功编译和启动。
-- 尝试用 PowerShell 注入鼠标事件做原生窗口坐标测试，但诊断证明合成输入没有进入 WebView 的 React `mousedown` 事件，因此这项自动化结果无效，不能用于判断真实鼠标拖动是否成功。
-- 下一位接手者应首先使用真实鼠标在标题栏空白区和品牌区域拖动窗口，并分别确认最小化、隐藏按钮仍可正常点击。
-
-### 开发进程注意事项
-
-本次对话结束前曾分别启动 Vite 和 `cargo run` 调试进程，但这些进程可能随 Codex 会话结束而退出。若页面显示连接拒绝，按以下顺序恢复：
-
-```powershell
-npm run dev
-cargo run --manifest-path src-tauri/Cargo.toml
-```
-
-如果 `cargo run` 报调试可执行文件被占用或 `HotKey already registered`，先通过托盘退出已有 DeskBox，或确认进程路径确实位于本项目的 `src-tauri/target/debug/deskbox.exe` 后再结束该进程。不要批量终止所有 Node 或 DeskBox 进程。
-
-## 14. 交接结论
-
-当前 0.2.0 已具备长期使用所需的核心闭环：主页管理、快速启动、独立置顶容器窗口、应用内拖拽整理、Windows 原生文件拖入、持久回收站、自动监听桌面、原子数据写入、迁移备份、设置和托盘驻留。后续仍应保持组件只负责展示，把规则和系统能力放入独立数据模块或 Rust 模块。
-
-## 15. 2026-08-16 多窗口架构交接
-
-### 主页窗口
-
-- 窗口标签为 `main`，由 `Ctrl+Shift+H` 和托盘“显示 / 隐藏”控制。
-- 主页显示容器概览卡片，不再在主页内部渲染全部快捷方式网格。
-- 点击卡片会调用 `appWindowStore.showContainerWindow(id)`；Rust 端负责复用或创建真实窗口。
-- 卡片右上角提供重命名、隐藏、删除；标题双击也可重命名。
-
-### 容器悬浮窗口
-
-- 由 `src-tauri/src/container_windows.rs` 动态创建，标签为 `container-{containerId}`。
-- 配置为 `decorations(false)`、`transparent(true)`、`always_on_top(true)`、`resizable(true)`。
-- `FloatingContainer.tsx` 通过 `getCurrentWindow().label` 解析容器 ID，并用同一份 `AppData` 找到内容。
-- 标题栏空白区域可拖动。重命名、最小化和隐藏按钮均通过 `data-window-control` 排除拖拽。
-- 关闭图标调用 `hide()`；原生 `CloseRequested`（例如 Alt+F4）也被 Rust 拦截并隐藏窗口。
-- 所有窗口的标题均可通过按钮或双击进入编辑；Enter/失焦保存，Escape 取消。
-
-### 持久化与同步
-
-- 业务数据仍使用原有 `deskbox-data.json`，没有迁移到 `tauri-plugin-store`，避免影响已有用户数据和 Rust 的恢复、图标、监听逻辑。
-- `deskbox-container-windows.json` 仅保存每个容器窗口的物理坐标和客户区尺寸。
-- 每次移动或调整大小都会更新布局文件；损坏布局文件会被忽略，窗口使用默认偏左居中位置。
-- 任何窗口的 `AppOperation` 原子提交成功后，Rust 发送带 revision 的 `app-data-changed`。其他窗口由 `useDeskBox` 按版本重新读取数据。
-- 悬浮窗口禁用了桌面监听器，只有主页启动监听，避免多窗口重复收纳同一文件。
-
-### 当前开发进程
-
-截至本次交接，已启动本项目的 Vite 与 Tauri 调试进程。主控台隐藏时可按 `Ctrl+Shift+H` 显示。若需重新启动，请在项目根目录执行：
-
-```powershell
-npm run tauri dev
-```
-
-## 16. 2026-08-16 核心 0.2.0 交接
-
-- 数据已升级为 v2，包含 `revision`、持久回收站和快捷方式使用统计。真实 v1 数据迁移及迁移前备份已验证。
-- 所有业务修改通过 Rust `AppOperation` 原子执行；浏览器模式有同语义执行器用于界面测试。
-- `Alt+Space` 打开独立 `quick-launch` 窗口，支持快捷方式、容器、HTTP(S)、绝对路径和 UNC 路径；不执行任意命令。
-- 主页新增概览/整理视图，支持真实指针拖拽容器排序、快捷方式排序及跨容器移动；右键“移动到”是精确替代入口。
-- 删除容器和快捷方式会进入应用内回收站，并支持即时撤销、恢复、永久删除和清空。
-- 设置新增数据导出、导入和备份目录；每日首次修改前创建备份并保留最近 7 份。
-- 已验证 `npm run test` 5 项前端测试、Rust 4 项测试、生产构建、Clippy 零警告、单实例和原生全局快捷键。
-- Playwright 截图位于 `output/playwright/core-home.png`、`core-manage.png`、`core-trash.png` 和 `core-quick-launch.png`。
-
-## 17. 2026-08-16 本次对话最终交接（最新）
-
-> 本章优先级高于前面关于 0.1.0、整包保存和“尚未实现”的历史描述。
-
-### 本次对话做了什么
-
-1. 先阅读本文件并完成产品评估，确定 DeskBox 的核心价值是“快速启动 + 自动整理 + 场景化悬浮工作区”。
-2. 按核心 1.0 方案完成实现：v2 数据层、单实例、`Alt+Space` 启动器、主页整理视图、拖拽排序/跨容器移动、持久回收站、数据备份导入导出。
-3. 修复拖拽界面的嵌套交互控件问题：快捷方式使用独立拖拽把手，启动按钮保持单独的可访问控件。
-4. 更新 README 和本交接文档，并创建 Git 仓库、提交和推送到 GitHub。
-
-### 当前版本与 Git 状态
-
-- 应用版本：`0.2.0`。
-- 远端：`https://github.com/chengziyuan2025-spec/mydesk.git`。
-- 分支：`main`。
-- 核心实现提交：`936db27 feat: release DeskBox 0.2.0`。
-- 本地 Git 用户：`chengziyuan2025-spec <chengziyuan2025-spec@users.noreply.github.com>`。
-- `.gitignore` 已排除 `node_modules/`、`dist/`、`src-tauri/target/`、`.playwright-cli/`、`output/playwright/` 和日志。
-- 最新文档修改需要继续提交并推送；不要重新初始化仓库或覆盖 `main` 历史。
-
-### 已实现的代码边界
-
-- Rust 数据和系统能力：`src-tauri/src/models.rs`、`operations.rs`、`storage.rs`、`commands.rs`、`lib.rs`。
-- 前端状态与平台适配：`src/types.ts`、`src/data/operations.ts`、`src/data/search.ts`、`src/hooks/useDeskBox.ts`、`src/services/platform.ts`。
-- 主界面：`src/App.tsx`、`ManageView.tsx`、`QuickLauncher.tsx`、`TrashPanel.tsx`、`SearchResults.tsx`。
-- 所有业务修改使用 `AppOperation`：Rust 端在互斥锁中执行，前端浏览器模式使用同语义的本地执行器。
-- `save_app_data` 已不再作为常规业务入口；不要重新引入窗口整包覆盖。
-
-### 数据与运行时行为
-
-- `AppData.version` 固定为 2，包含 `revision`、`trash`；快捷方式包含 `launchCount` 和 `lastLaunchedAt`。
-- v1 数据首次加载时自动迁移，迁移前写入 `%APPDATA%\\com.deskbox.app\\backups\\migration-*.json`；未来版本数据拒绝加载，不覆盖原文件。
-- 每个本地日首次修改前创建 `daily-*.json`，保留最近 7 份。导入前会备份当前数据。
-- 删除容器或快捷方式进入应用回收站；快捷方式恢复优先回原容器和原位置，原容器不存在时进入默认容器，必要时创建“已恢复”。
-- 快速启动窗口标签为 `quick-launch`，固定 680x460，置顶、不进任务栏，失焦或 `Esc` 隐藏。
-- 快速启动允许已有快捷方式/容器、HTTP(S)、Windows 绝对路径和 UNC 路径；不允许任意协议、PowerShell 或系统命令。
-- `Alt+Space` 已在 Windows 实机注册成功；主页“快速启动”按钮是快捷键不可用时的备用入口。
-- 第二个 `deskbox.exe` 实例会退出并唤醒已有主窗口；已实测进程数保持为 1。
-
-### 已执行验证
-
-- `npm run check`：通过；包含 5 个 Vitest 测试、TypeScript 检查、Vite 生产构建和 Cargo check。
-- `cargo test --manifest-path src-tauri/Cargo.toml`：4 个测试通过。
-- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：零警告。
-- Playwright 浏览器模式：搜索直接启动结果、概览/整理切换、真实指针拖拽快捷方式跨容器、容器排序、右键移动、回收站删除/恢复均已验证。
-- Windows 原生：v1→v2 迁移备份、`Alt+Space` 唤起、第二实例保护均已验证。
-- 当前开发服务通常是 Vite `127.0.0.1:1420` 加 `cargo run --manifest-path src-tauri/Cargo.toml`；如果会话结束，按原交接中的启动命令重启。
-
-### 已知限制与下一步
-
-- 桌面监听器目前仍主要处理 Create，Rename/Move 事件兼容和对应测试尚未补齐。
-- 开机自启动、规则自动分类、场景切换、悬浮窗透明度/鼠标穿透/边缘吸附仍未实现。
-- 正式发布前仍需收紧 `tauri.conf.json` 的 `csp: null`，复核 capability 权限，并完成安装包测试。
-- 浏览器模式的导入功能不打开本地文件选择框，完整导入导出能力只在 Tauri 桌面环境可用。
-- 快速启动当前没有拼音索引，也不执行任意系统命令。
-- 后续修改数据字段时必须同时更新 Rust 模型、Rust 迁移器、`src/types.ts`、浏览器默认数据和对应测试。
-
-## 18. 2026-08-16 原生拖放实现与运行态修复（当前最新）
-
-> 本章记录本次对话完成的工作，并覆盖前文关于数据 v2、没有单元测试及悬浮窗显示行为的旧描述。
-
-### 18.1 用户目标与完成范围
-
-- 仅独立悬浮容器窗口接受外部拖入；主页和快速启动窗口不启用这一交互。
-- 支持从 Windows 资源管理器拖入 `.exe`、`.lnk`、文件夹、普通文件和多选路径。
-- 支持从浏览器地址栏尽力拖入 HTTP(S) URL；WebView2 不把文本交给 DOM 时不会生效，这是平台限制。
-- 同一容器按规范化目标路径去重；同一批拖入中的重复项也会跳过。
-- 每个路径独立处理，单项失败不会阻断其余项目；完成后汇总添加、重复、取消和失败数量。
-- `FloatingContainer` 暴露可选异步 `onBeforeAdd(candidate)`，默认直接添加，为后续确认对话框预留接口。
-
-### 18.2 前端实现
-
-- `src/components/FloatingContainer.tsx` 使用 `getCurrentWebview().onDragDropEvent()`，按当前 Tauri API 的 `enter / over / drop / leave` payload 处理原生路径，组件卸载时注销监听。
-- 未使用 React `onDrop/onDragOver` 处理文件。窗口级 DOM `dragover/drop` 只处理 `text/uri-list` 或 `text/plain` 的 HTTP(S) URL；发现 `dataTransfer.files` 或 file item 时立即忽略。
-- `src/data/externalDrop.ts` 集中实现 URL 校验/提取、显示名规则、目标规范化和去重；`externalDrop.test.ts` 覆盖这些纯函数。
-- 路径命名规则：文件夹使用末级目录名；EXE 去扩展名；普通文件保留完整文件名；LNK 显示链接文件名；URL 使用完整 URL。
-- `useDeskBox.actions.addShortcut` 新增兼容式 options 参数，支持 `source`、`arguments`、`workingDirectory`、预取图标和关闭单项通知；原有添加弹窗调用无需修改。
-
-### 18.3 Rust 与 Windows 实现
-
-- `container_windows.rs` 对动态容器 Builder 设置 `.visible(true)`，并在 Windows 设置 `.drag_and_drop(true)`。保存的尺寸和位置在 `build()` 前写入 Builder，避免窗口创建后跳动。
-- 已存在窗口重新打开时执行 `unminimize() + show() + set_focus()`；新建窗口在注册事件后也显式 `show()`。此补丁已用 Windows UI Automation 验证最小化恢复。
-- 新命令 `resolve_shortcut`、`is_directory`、`get_file_name` 已在 `lib.rs` 注册，并在 `platform.ts` 提供类型化封装。
-- `.lnk` 使用 `IShellLinkW + IPersistFile` 无界面解析。COM 初始化兼容线程已初始化和 `RPC_E_CHANGED_MODE` 情况，只在本调用成功初始化时执行 `CoUninitialize()`。
-- Windows 启动改用 `ShellExecuteW`，目标、参数和工作目录分开传递，保留开始菜单快捷方式的启动语义。
-- `Cargo.toml` 的 `windows` crate 已启用 `Win32_Storage_FileSystem`、`Win32_System_Com`、`Win32_UI_Shell` 和 `Win32_UI_WindowsAndMessaging`。
-
-### 18.4 数据 v3 与迁移
-
-- `ShortcutItem` 新增 `source: "drag_drop" | "manual"`、`arguments` 和 `workingDirectory`；Rust 字段对应 `ShortcutSource`、`arguments`、`working_directory`。
-- 当前 `AppData.version` / `CURRENT_DATA_VERSION` 为 3。
-- Rust 存储与浏览器存储均支持旧数据升级；活动快捷方式、回收站快捷方式以及回收站容器内的嵌套快捷方式统一补 `source: manual`，启动元数据补 `null`。
-- 默认数据、手动添加和桌面自动收纳标记为 `manual`；本次外部文件与 URL 拖入标记为 `drag_drop`。
-- 开发机真实数据 `%APPDATA%\com.deskbox.app\deskbox-data.json` 已迁移到 v3，迁移后容器和原快捷方式均保留。
-
-### 18.5 Capability 兼容性决定
-
-- `capabilities/default.json` 的窗口范围包含 `main`、`container-*` 和 `quick-launch`，并保留 `core:event:default`。
-- 不要添加计划中提到的 `core:webview:allow-drag-drop-event`：本项目实际解析到的 Rust Tauri 2.11 schema 不定义该 permission，添加后构建会直接失败。
-- 当前版本的 `onDragDropEvent()` 在现有 `core:event:default` 下已能注册；外部文件接收由动态窗口的 `.drag_and_drop(true)` 控制。
-
-### 18.6 本次故障根因
-
-- 用户曾观察到工作区“1”不显示、向“示例”拖文件夹提示添加失败。
-- 当时新版 Vite 前端仍连接旧的 `src-tauri/target/debug/deskbox.exe`。旧 Rust 进程没有注册 `is_directory/get_file_name/resolve_shortcut`，所以前端拖入路径识别全部失败。
-- 已终止旧进程并通过 Tauri dev 启动 `src-tauri/target/dragdrop-dev/debug/deskbox.exe`。不要同时运行多个不同 target 目录的 DeskBox 调试进程。
-- 窗口“1”当时实际已创建但处于隐藏状态；恢复后保持可见。随后又补充并验证了最小化窗口的 `unminimize()` 恢复路径。
-- 如果未来再次出现“前端有拖入提示但添加全部失败”，第一步检查运行中的 `deskbox.exe` 路径和启动时间，而不是先修改前端拖放代码。
-
-### 18.7 验证结果
-
-- `npm run check`：通过；3 个 Vitest 文件共 9 个测试通过，TypeScript/Vite 生产构建通过，Cargo check 通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml`：12 个 Rust 测试通过，其中包含真实临时 `.lnk` 创建和解析。
-- `git diff --check`：通过，仅有 Git 的 LF→CRLF 工作区提示，无空白错误。
-- Playwright 已验证外部拖入辅助函数和 URL drop 备用流程的界面行为。
-- Windows UI Automation 已验证点击工作区“1”会创建并显示 `DeskBox - 1`；将其最小化后再次点击卡片，窗口从 `minimized=true` 恢复为 `false`。
-
-### 18.8 下一次对话的首要事项
-
-1. 先运行 `git status` 和 `git log -1`，确认本章对应提交已经存在，不要重复实现原生拖放。
-2. 需要调试桌面功能时只运行一个 `npm run tauri dev`，并确认进程来自当前仓库预期 target 目录。
-3. 用真实鼠标分别拖入文件夹、TXT/PDF/JPG、多选文件、EXE、传统 LNK 和开始菜单 LNK，检查覆盖提示、单次添加、图标和双击启动。
-4. Chrome/Edge 地址栏 URL 拖入只做尽力验收；失败时记录 WebView2 是否提供 DOM 文本，不要改成依赖 HTML5 文件拖放。
-5. 如需发布，继续执行 `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 和安装包实机测试；本次已执行 `npm run check` 与 Rust 测试，但未生成发布安装包。
-
-## 19. 2026-08-16 强化悬浮工作区与桌面源文件隐藏（本次对话最新）
-
-### 19.1 悬浮工作区增强
-
-- `ContainerItem.pinned` 已落实为真实置顶行为：新增 `setContainerPinned` 业务操作，并通过 `set_container_window_pinned` 同步原生窗口。
-- `deskbox-container-windows.json` 扩展并保持旧格式兼容，保存窗口位置、尺寸、显示器键、折叠、锁定、透明度、鼠标穿透、吸附边缘、自动隐藏、布局、任务栏和虚拟桌面配置。
-- `src/components/FloatingContainer.tsx` 标题栏新增置顶、折叠、设置和“隐藏全部源文件”按钮。
-- 工作区设置支持紧凑/网格/列表布局、锁定位置尺寸、透明度、鼠标穿透、吸附边缘、贴边自动隐藏、任务栏和虚拟桌面选项，并允许编辑 X/Y/宽/高。
-- 主页面工具栏支持一键显示/隐藏全部已创建容器，并提供恢复悬浮窗鼠标交互按钮。
-- 鼠标穿透恢复方式：主页面按钮、托盘菜单“恢复悬浮窗鼠标交互”、全局快捷键 `Ctrl+Shift+M`。
-
-### 19.2 本次运行态问题修复
-
-- 修复锁定位置时跳回旧位置：获取窗口设置时会先读取当前原生窗口实时位置和尺寸，再提交锁定变更。
-- 修复透明度换算错误：Win32 `SetLayeredWindowAttributes` 需要 `0..255`，现在会把 UI 百分比正确转换；最低透明度调整为 60%，100% 为完全不透明。
-- 修复工作区无法点击/拖动：根因是该窗口布局文件中的 `clickThrough: true`；已通过 `Ctrl+Shift+M` 恢复当前开发机所有窗口交互，并将“学校”工作区状态保存为 `clickThrough: false`。
-- 吸附逻辑现在只在用户选择了具体边缘时生效，不会在 `snapEdge: none` 时强制吸附。
-
-### 19.3 桌面源文件隐藏
-
-- `ShortcutItem` 新增可选 `sourcePath`，旧 v3 数据缺失时自动按 `null` 处理；`.lnk` 拖入会保存桌面原始 `.lnk` 路径，而快捷方式目标仍保存到 `path`。
-- 添加快捷方式弹窗新增“添加后隐藏桌面源文件”复选框。
-- 快捷方式右键菜单将隐藏/恢复合并为一个状态操作：源文件可见时显示“隐藏源文件”，隐藏后改为“恢复源文件显示”。支持文件、文件夹、EXE、LNK 等。
-- 悬浮窗标题栏将批量隐藏/恢复合并为一个状态按钮，在“隐藏全部源文件”和“恢复全部源文件显示”之间切换，批量命令跳过 HTTP(S)，单个失败不会阻断其他项目。
-- Windows 使用 `GetFileAttributesW + SetFileAttributesW` 同时设置 Hidden + System 属性，并通过 `SHChangeNotify` 主动刷新资源管理器；恢复时同时清除这两个属性。该操作不删除文件、不移动文件；若用户关闭 Windows 的“隐藏受保护的操作系统文件”，系统仍会按用户设置显示淡色项目，属性方案无法覆盖该系统选项。
-
-### 19.4 新增命令/平台封装
-
-- `get_container_window_settings`
-- `update_container_window_settings`
-- `show_all_container_windows`
-- `hide_all_container_windows`
-- `list_monitors`
-- `set_container_window_pinned`
-- `restore_container_mouse_interaction`
-- `hide_path`
-- `show_path`
-- `toggle_path_hidden`
-- `get_path_hidden`
-- `hide_paths`
-- `show_paths`
-
-前端封装位于 `src/services/platform.ts`，窗口实现主要位于 `src-tauri/src/container_windows.rs`，文件属性命令位于 `src-tauri/src/commands.rs`。
-
-### 19.5 验证与启动注意事项
-
-- 当前最终验证：Vitest 16 个测试通过，Rust 18 个有效测试通过（Everything 实机集成测试按设计忽略），`npm run build`、`cargo check`、`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 和 `git diff --check` 均通过。
-- 当前开发版依赖 Vite `127.0.0.1:1420`。如果窗口显示 `ERR_CONNECTION_REFUSED`，先启动 `npm run dev`，再重启 DeskBox；推荐直接使用 `npm run tauri dev`，不要只启动 debug exe。
-- 直接运行 `src-tauri/target/debug/deskbox.exe` 时必须保证 Vite 已在 1420 端口监听，否则窗口会停留在连接错误或加载页。
-- 本次曾遇到旧窗口停在“正在整理桌面盒子…”：原因是旧 DeskBox 进程与 Vite 服务生命周期不同步。处理方式是确认 1420 返回 200，结束项目目录下旧 `deskbox.exe`，再启动单一新进程。
-- 当前开发机最近一次运行进程为 `E:\vibecoding\hoverDesk\src-tauri\target\debug\deskbox.exe`；不要同时运行 `target\dragdrop-dev` 和 `target\debug` 下的多个 DeskBox。
-
-## 20. 2026-08-16 DeskBox 0.3.0 快捷键与统一快速启动
-
-### 20.1 数据与搜索
-
-- 数据格式升级为 v4；快捷方式新增 `targetType`、`aliases`、`favorite`，容器新增别名、收藏、打开统计和独立热键。
-- 设置新增主窗口、快速启动、全部容器快捷键及 Everything 授权配置；v1-v3、活动项目和回收站嵌套项目均会补齐默认值。
-- 快速启动使用标准拼音全拼/首字母、自定义别名、收藏、最近和频率统一排序；隐藏容器也可按名称直接打开。
-- 外部启动记录最多保留 100 个普通历史项，收藏和带别名项目不自动清理。
-- 搜索结果支持移动 DeskBox 快捷方式、加入容器、定位和移入应用回收站；系统应用和 Everything 文件永不提供磁盘删除。
-
-### 20.2 可配置全局快捷键
-
-- 后端运行时维护快捷键到动作的映射，支持主窗口、快速启动、显示/隐藏全部非隐藏容器和每个容器的独立打开键。
-- 默认保留 `Ctrl+Shift+H`、`Alt+Space` 和固定恢复键 `Ctrl+Shift+M`；新增绑定默认留空。
-- 修改绑定时先注册新键，成功保存后才注销旧键。格式错误、DeskBox 内重复或被其他程序占用均不会破坏旧绑定。
-- “显示全部”现在会创建尚未打开过的非隐藏容器窗口；任一容器可见时同一动作会隐藏全部。
-
-### 20.3 Windows 应用与 Everything
-
-- Rust 缓存用户/公共开始菜单 `.lnk` 和固定 `Get-StartApps` 系统目录输出，区分绝对路径与受控 AppsFolder 标识。
-- Everything 默认关闭。用户在设置中启用后，DeskBox 只从检测或显式选择的 `Everything.exe` 启动程序。
-- 文件搜索直接使用官方 Unicode Query2 `WM_COPYDATA` IPC，默认超时 2 秒，不依赖 `es.exe`、SDK DLL 或命令行搜索。
-- Everything 查询文本仅作为 IPC 搜索数据；直接启动仍只接受 HTTP(S)、存在的绝对/UNC 路径或后端目录验证过的系统应用标识。
-
-### 20.4 计算与验证
-
-- 受限 mathjs AST 只允许数字、白名单运算符和单位，不开放函数、赋值或代码执行；Enter 复制计算结果。
-- 前端当前有 16 个 Vitest 测试；Rust 默认测试为 17 项通过、1 项忽略，另有需要真实且完成索引的 Everything Query2 IPC 显式集成测试和系统应用目录扫描。
-- Playwright 已验证 `jsq`、自定义 `jsb`、单位换算、结果菜单、别名标签和快捷键录制；截图位于 `output/playwright/quick-launch-03.png` 与 `settings-hotkeys-03.png`。
-- 真实 Everything 查询回复使用官方 SDK 默认 ID `0`；`cargo test --manifest-path src-tauri/Cargo.toml everything_ipc::tests::queries_running_everything_when_available -- --ignored` 已通过，实机测试结束后已退出本次临时启动的 Everything 进程。
-
-## 21. 2026-08-17 本次对话交接：源文件隐藏切换与 GitHub 发布
-
-### 21.1 本次完成内容
-
-- 修复源文件隐藏只变淡的问题：Windows 后端同时设置 `FILE_ATTRIBUTE_HIDDEN` 和 `FILE_ATTRIBUTE_SYSTEM`，并调用 `SHChangeNotify(SHCNE_ATTRIBUTES, SHCNF_PATHW, ...)` 通知资源管理器刷新。
-- `set_local_path_hidden` 在设置后回读属性并校验；属性没有按预期更新时返回明确错误，不再显示假成功 Toast。
-- 新增 `toggle_path_hidden` 和 `get_path_hidden` 命令，前端通过 `platform.togglePathHidden` / `platform.getPathHidden` 使用。
-- 单个快捷方式右键菜单合并为一个状态菜单项：可见时显示“隐藏源文件”，隐藏后显示“恢复源文件显示”。
-- 悬浮容器标题栏的批量按钮合并为一个状态按钮，根据所有本地源文件状态在“隐藏全部源文件”和“恢复全部源文件显示”之间切换。
-- 新增 Windows 临时文件测试，确认 Hidden/System 属性设置与恢复均正确。
-
-### 21.2 Windows 显示边界与当前机器状态
-
-- Windows 注册表当前为 `Hidden=1`、`ShowSuperHidden=0`，即隐藏受保护系统文件仍关闭；标准设置下 Hidden + System 文件应从桌面消失。
-- 若用户关闭“隐藏受保护的操作系统文件”，Windows 会强制显示 System 文件，即使属性正确也会显示淡色；文件属性方案无法覆盖该系统显示选项，除非移动或改名源文件，本项目不做破坏原路径的处理。
-- 曾检查 `%APPDATA%\com.deskbox.app\deskbox-data.json`：当前若干拖入项目 `sourcePath` 为 `null`，前端会回退使用 `path`；检查时桌面文件仍为普通 `Archive/Directory` 属性，说明此前点击没有真正写入属性。现在后端会回读验证并在失败时报告原因。
-
-### 21.3 验证与发布
-
-- `npm run check`：Vitest 16 项通过、TypeScript/Vite 构建通过、Cargo check 通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml`：18 项通过，Everything 实机测试 1 项按设计忽略。
-- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过。
-- `git diff --check`：通过；仅有 Windows Git 的 LF/CRLF 提示。
-- Playwright 已验证主工作区、悬浮工作区、右键隐藏/恢复菜单和 420px 窄屏，无控制台错误。
-- 已提交并推送 GitHub：仓库 `https://github.com/chengziyuan2025-spec/mydesk.git`，分支 `main`，提交 `3c4f091 feat: release DeskBox 0.3.0`。
-- 当前工作树干净；`HEAD` 与 `origin/main` 均指向 `3c4f091`。
-
-### 21.4 运行状态与下次对话建议
-
-- 当前开发版由 `npm run tauri dev` 启动，Vite 地址为 `http://127.0.0.1:1420/`，原生进程路径为 `E:\vibecoding\hoverDesk\src-tauri\target\debug\deskbox.exe`。
-- 不要同时运行多个 DeskBox 调试进程；遇到旧界面时先结束路径明确属于本仓库的 `deskbox.exe`，再运行 `npm run tauri dev`。
-- 下次优先在原生悬浮窗口中再次点击单项或批量隐藏，确认桌面属性是否变为 `Hidden, System`；若 Toast 报属性权限错误，记录具体路径和错误文案。
-- 继续修改前先运行 `git status` 和 `git log -1 --oneline --decorate`，确认不要重复提交已发布的 `3c4f091`。
-
-## 22. 2026-08-17 DeskBox 外观自定义
-
-### 22.1 数据与界面
-
-- 数据格式升级为 v5。`Settings` 新增 `appearance`：`accentColor` 与 `background`（`kind`、`assetPath`、`assetName`、`overlay`）；v1-v4 和浏览器 `localStorage` 数据均会补齐默认值。
-- 设置弹层新增主题色预设、自定义颜色、背景媒体预览/替换/移除以及 0-80% 背景遮罩。
-- 主页、悬浮工作区和快速启动共享 `AppearanceBackdrop`。图片居中 `cover`；视频采用 `muted`、`autoplay`、`loop`、`playsInline`。加载失败或媒体引用不存在时回退普通背景。
-- 自定义背景只突出内容区；主页、悬浮工作区和快速启动的顶部工具栏继续使用当前亮色或暗色主题表面，保证常用操作区稳定易读。
-- 主页容器概览和整理视图在工具栏下方保留额外顶部留白（窄屏同步收紧），让背景在内容上方有可见的展示空间。
-- 自定义强调色只覆盖 `--accent` 及其派生 hover/soft 色，不修改完整调色板。移除媒体或切换媒体在新设置保存成功后再尽力清理旧文件。
-
-### 22.2 媒体存储与安全边界
-
-- 新命令 `pick_background_media` 只接受 PNG/JPG/JPEG/WebP/GIF/MP4/WebM，并把文件复制到 `%APPDATA%\com.deskbox.app\assets`；原始文件可被移动或删除。
-- 导入复制针对 Windows 文件选择后可能的短暂占用重试 3 次；仍失败时会把原文件路径和底层 I/O 错误返回到界面 Toast。
-- 新命令 `delete_background_asset` 只允许删除该 assets 目录内真实存在的文件，避免前端传入任意路径删除文件。
-- `tauri.conf.json` 开启 asset protocol，范围限制为 `$APPDATA/assets/**/*`（Tauri 的 `$APPDATA` 已经包含应用标识）；`Cargo.toml` 启用 Tauri `protocol-asset` feature。前端用 `convertFileSrc` 供 `<img>` 和 `<video>` 加载。
-- 导出仍是 JSON，不携带二进制媒体。跨机器导入后若引用不存在，应用会显示普通背景；不影响其他配置。
-
-### 22.3 验证与后续验收
-
-- 2026-08-17 已修复原生 WebView2 图片背景 403：Tauri `$APPDATA` 已包含 `com.deskbox.app`，asset protocol 范围必须使用 `$APPDATA/assets/**/*`，不能重复拼接应用标识。实机验证主页、悬浮容器和快速启动窗口均成功加载现有 PNG（1933×1156）。
-- `npm run check` 通过：21 个 Vitest 测试、TypeScript/Vite 构建和 Cargo check 均通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml`：23 项通过、Everything 实机查询 1 项按设计忽略；`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 通过。
-- Playwright 浏览器模式已验证主题色、图片选择/预览/移除、1280px 和 390px 设置布局，无控制台错误；截图位于 `output/playwright/appearance-settings.png`、`appearance-image-preview.png`、`appearance-mobile.png`。
-- 下次在原生 `npm run tauri dev` 窗口中导入一个 MP4/WebM 和一个图片，确认应用数据目录复制、三类窗口同步显示及视频实际解码；浏览器自动化未包含本地视频样本。
-
-### 22.4 本次对话：背景修复与布局微调
-
-- 用户反馈选择图片后背景没有变化。检查确认 JSON 设置与 `%APPDATA%\com.deskbox.app\assets` 中的导入文件均存在；WebView2 调试显示图片请求返回 `403 Forbidden`。
-- 根因是误将 Tauri 的 `$APPDATA` 当作系统 `%APPDATA%` 使用。该变量实际已解析到应用专属目录，修正为 `$APPDATA/assets/**/*` 后，主窗口、悬浮容器和快速启动窗口均成功加载同一张 PNG；临时远程调试端口已关闭，常规开发版仍可用。
-- 随后的视觉调整保持顶部标题栏、Workspace 工具栏、悬浮容器标题栏和快速启动搜索栏使用主题色，背景媒体展示在内容区，不干扰操作控件。
-- 主页工具栏上下留白收紧为桌面 `14px / 12px`、窄屏 `16px / 12px`；概览卡片和整理视图分别在工具栏下保留桌面 `18px`、窄屏 `14px` 的背景展示间距。
-- 本轮执行过 `npm run check`（21 项 Vitest、TypeScript/Vite、Cargo check）、Rust 测试（23 通过、1 忽略）、Clippy 零警告；布局微调后再次执行 `npm run build` 与 `git diff --check`。
-
-## 23. 2026-08-17 本次对话：原生 Dock 与壁纸自适应主题
-
-### 23.1 完成内容
-
-- 容器布局文件 `%APPDATA%\com.deskbox.app\deskbox-container-windows.json` 新增可选 `docked`、`dockSide` 字段；旧布局缺少字段时按未停靠处理，不影响原有位置、折叠、透明度、鼠标穿透、吸附边缘和虚拟桌面配置。
-- `src-tauri/src/container_windows.rs` 现在在 `WindowEvent::Moved` 中实现真实左右 Dock：开启“贴边自动隐藏”后，窗口到达左右工作区边缘时分别移至 `workArea.x - width + 4` 或 `workArea.x + workArea.width - 4`，并持久化隐藏坐标与边缘状态。
-- Dock 的 4px 可见区仍接收鼠标。鼠标进入会通过 `reveal_container_window_dock` 恢复到对应边缘的展开位置；鼠标离开且没有按压/拖动操作时，前端延迟 1 秒调用 `dock_container_window` 重新隐藏。旧的 CSS transform 假隐藏已移除。
-- Dock 隐藏状态临时关闭 `clickThrough`，确保热区可用；展开后恢复用户的鼠标穿透配置。程序恢复位置产生的 `Moved` 事件会被识别为恢复状态，不会立即再次隐藏。
-- 数据格式继续为 v5。`AppearanceSettings` 新增默认值为 `false` 的 `adaptiveAccent`；Rust 数据读取和浏览器 `localStorage` 归一化都会为旧 v5 记录补齐该字段。
-- 新增 Rust 命令 `get_wallpaper_dominant_color`。Windows 端通过 `IDesktopWallpaper` 获取壁纸路径，用 `image` crate 缩放至 1x1 取平均 RGB，返回小写 `#rrggbb`；COM、路径、解码或取色失败时返回 `None`，界面不显示报错。
-- 主页、悬浮容器和快速启动共用的 `AppearanceBackdrop` 在“自适应”开启后立即取色，并每 30 秒刷新 `--accent`。取色失败时保留用户自定义色或原有默认色；关闭开关会立即恢复原配色。设置弹层的主题色区域新增“自适应”开关。
-
-### 23.2 关键文件
-
-- `src-tauri/src/container_windows.rs`：Dock 状态机、坐标计算、布局持久化、恢复/重新停靠命令和布局兼容测试。
-- `src-tauri/src/wallpaper.rs`：Windows 壁纸路径与平均色提取；`Cargo.toml` 新增 `image` 依赖。
-- `src-tauri/src/commands.rs`、`src-tauri/src/lib.rs`：注册 Dock 和壁纸取色命令。
-- `src/components/FloatingContainer.tsx`：4px 热区恢复、离开延迟停靠和指针操作保护。
-- `src/components/AppearanceBackdrop.tsx`、`src/components/SettingsPanel.tsx`：自适应主题色刷新与开关。
-
-### 23.3 验证与后续验收
-
-- `npm run check` 已通过：22 个 Vitest 测试、TypeScript/Vite 构建和 Cargo check 均通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml` 已通过：26 项通过，Everything 实机查询 1 项按设计忽略；新增 Dock 旧布局兼容、左右 4px 坐标、v5 自适应默认值与 HEX 格式测试。
-- `git diff --check` 已通过。开发服务器当前可用地址为 `http://127.0.0.1:1421/`；默认 1420 端口在本机已被现有 Vite 服务占用。
-- 尚需在原生 `npm run tauri dev` 窗口人工确认：左右拖到边缘后只露出 4px、热区恢复、离开 1 秒重藏、重启后恢复停靠状态，以及与折叠、透明度、鼠标穿透组合时的实际 WebView2 行为。
+安装包位于 `src-tauri/target/release/bundle`。发布前还应在原生 WebView2 中人工检查：
+
+1. 连续拖动和缩放悬浮窗后不卡死。
+2. 调整透明度不改变位置。
+3. 隐藏后重新打开恢复此前位置和大小。
+4. 左右 Dock 可通过热区、主页和快捷键恢复。
+5. 设置页可返回；悬浮设置可通过关闭、Esc 和外部点击退出。
+6. 多显示器、不同 DPI 和移除显示器后的窗口可见性。
+7. 鼠标穿透与全局恢复入口。
+
+本次提交前基线：前端 24 项测试通过；Rust 28 项通过、1 项 Everything 实机测试按设计忽略；前端构建、Cargo 检查和 diff whitespace 检查通过。最终推送前会重新执行同一套检查。
+
+## 13. 已知限制与后续优先级
+
+- 主要支持和验证平台是 Windows；非 Windows 只有有限降级能力。
+- 背景视频格式取决于本机 WebView2 解码能力。
+- Everything 搜索要求本机 Everything 启用 Query2 IPC。
+- 导出文件不包含背景媒体，需要跨机器迁移时手动复制 `assets/`。
+- 自动分类规则和开机自启动尚未实现。
+- Dock、DPI、鼠标穿透和虚拟桌面组合依赖 Windows 原生行为，发布前仍需要真实桌面回归，浏览器测试不能替代。
+
+下一阶段优先级建议：先补窗口状态机的 Windows 集成测试与崩溃恢复，再做自动分类和开机自启动，最后评估背景资源打包导出。

@@ -6,12 +6,13 @@ use crate::{
     watcher::WatcherState,
     AppError,
 };
+use serde::Serialize;
 use std::{
     fs,
     path::Path,
     process::Command,
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -22,14 +23,27 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn emit_data_changed(app: &AppHandle, revision: u64) -> Result<(), AppError> {
-    app.emit("app-data-changed", revision)
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationCommit {
+    pub revision: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDataChange {
+    pub revision: u64,
+    pub operation: Option<AppOperation>,
+}
+
+pub(crate) fn emit_data_changed(app: &AppHandle, revision: u64, operation: Option<AppOperation>) -> Result<(), AppError> {
+    app.emit("app-data-changed", AppDataChange { revision, operation })
         .map_err(|error| AppError::Message(error.to_string()))
 }
 
 #[tauri::command]
-pub fn load_app_data(app: AppHandle) -> Result<AppData, AppError> {
-    storage::load(&storage::data_path(&app)?)
+pub fn load_app_data(app: AppHandle, state: State<DataState>) -> Result<AppData, AppError> {
+    state.read(&app)
 }
 
 #[tauri::command]
@@ -37,22 +51,25 @@ pub fn apply_app_operation(
     app: AppHandle,
     state: State<DataState>,
     operation: AppOperation,
-) -> Result<AppData, AppError> {
-    let _guard = state
-        .0
-        .lock()
-        .map_err(|_| AppError::Message("数据写入锁不可用".to_string()))?;
-    let path = storage::data_path(&app)?;
-    let mut data = storage::load(&path)?;
-    let removed_hotkey = if let AppOperation::DeleteContainer { container_id, .. } = &operation {
-        data.containers.iter().find(|item| item.id == *container_id).and_then(|item| item.hotkey.clone())
-    } else { None };
-    operations::apply(&mut data, operation)?;
-    storage::ensure_daily_backup(&path)?;
-    storage::save(&path, &data)?;
+) -> Result<OperationCommit, AppError> {
+    let started = std::time::Instant::now();
+    let event_operation = operation.clone();
+    let memory_started = Instant::now();
+    let (data, removed_hotkey) = state.mutate(&app, move |data| {
+        let removed = if let AppOperation::DeleteContainer { container_id, .. } = &operation {
+            data.containers.iter().find(|item| item.id == *container_id).and_then(|item| item.hotkey.clone())
+        } else { None };
+        operations::apply(data, operation)?;
+        Ok(removed)
+    })?;
+    let memory_elapsed = memory_started.elapsed();
     if let Some(accelerator) = removed_hotkey { crate::hotkeys::unregister(&app, &accelerator); }
-    emit_data_changed(&app, data.revision)?;
-    Ok(data)
+    let broadcast_started = Instant::now();
+    emit_data_changed(&app, data.revision, Some(event_operation))?;
+    let broadcast_elapsed = broadcast_started.elapsed();
+    #[cfg(debug_assertions)]
+    eprintln!("[deskbox:perf] apply_app_operation revision={} memory={}ms broadcast={}ms total={}ms", data.revision, memory_elapsed.as_millis(), broadcast_elapsed.as_millis(), started.elapsed().as_millis());
+    Ok(OperationCommit { revision: data.revision })
 }
 
 #[tauri::command]
@@ -76,10 +93,18 @@ pub fn update_container_window_settings(app: AppHandle, container_id: String, se
 }
 
 #[tauri::command]
+pub fn update_container_window_opacity(app: AppHandle, container_id: String, opacity: u8) -> Result<container_windows::ContainerWindowSettings, AppError> {
+    container_windows::update_opacity(&app, &container_id, opacity)
+}
+
+#[tauri::command]
 pub fn show_all_container_windows(app: AppHandle) -> Result<(), AppError> { container_windows::show_all(&app) }
 
 #[tauri::command]
 pub fn hide_all_container_windows(app: AppHandle) -> Result<(), AppError> { container_windows::hide_all(&app) }
+
+#[tauri::command]
+pub async fn toggle_all_container_windows(app: AppHandle) -> Result<(), AppError> { container_windows::toggle_all(app).await }
 
 #[tauri::command]
 pub fn list_monitors(app: AppHandle) -> Result<Vec<container_windows::MonitorInfo>, AppError> { container_windows::monitors(&app) }
@@ -89,6 +114,9 @@ pub fn set_container_window_pinned(app: AppHandle, container_id: String, pinned:
 
 #[tauri::command]
 pub fn restore_container_mouse_interaction(app: AppHandle) -> Result<(), AppError> { container_windows::restore_mouse_interaction(&app) }
+
+#[tauri::command]
+pub fn has_container_mouse_interaction_blocked(app: AppHandle) -> Result<bool, AppError> { container_windows::has_mouse_interaction_blocked(&app) }
 
 #[tauri::command]
 pub fn reveal_container_window_dock(app: AppHandle, container_id: String) -> Result<container_windows::ContainerWindowSettings, AppError> {
@@ -122,6 +150,12 @@ pub fn show_quick_launch(app: AppHandle) -> Result<(), AppError> {
     window
         .emit("quick-launch-reset", ())
         .map_err(|error| AppError::Message(error.to_string()))
+}
+
+#[tauri::command]
+pub fn show_settings_window(app: AppHandle) -> Result<(), AppError> {
+    crate::show_settings_window(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -210,8 +244,8 @@ fn managed_background_asset_path(assets: &Path, candidate: &Path) -> Result<std:
 }
 
 #[tauri::command]
-pub fn extract_icon(app: AppHandle, path: String) -> Result<Option<String>, AppError> {
-    icons::extract(&app, &path)
+pub fn extract_icon(app: AppHandle, state: State<icons::IconCacheState>, path: String) -> Result<Option<String>, AppError> {
+    icons::extract(&app, &state, &path)
 }
 
 fn is_web_url(target: &str) -> bool {
@@ -321,17 +355,12 @@ pub fn launch_shortcut(
     catalog_state: State<launcher::SystemCatalogState>,
     shortcut_id: String,
 ) -> Result<AppData, AppError> {
-    let _guard = state
-        .0
-        .lock()
-        .map_err(|_| AppError::Message("数据写入锁不可用".to_string()))?;
-    let path = storage::data_path(&app)?;
-    let mut data = storage::load(&path)?;
-    let shortcut = data
+    let shortcut = state.read(&app)?
         .containers
-        .iter_mut()
-        .flat_map(|container| &mut container.shortcuts)
+        .iter()
+        .flat_map(|container| &container.shortcuts)
         .find(|item| item.id == shortcut_id)
+        .cloned()
         .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
     match shortcut.target_type {
         crate::models::LaunchTargetType::ShellApp => {
@@ -342,12 +371,16 @@ pub fn launch_shortcut(
         }
         _ => launch_target(&shortcut.path, shortcut.arguments.as_deref(), shortcut.working_directory.as_deref())?,
     }
-    shortcut.launch_count = shortcut.launch_count.saturating_add(1);
-    shortcut.last_launched_at = Some(now_ms());
-    data.revision = data.revision.saturating_add(1);
-    storage::ensure_daily_backup(&path)?;
-    storage::save(&path, &data)?;
-    emit_data_changed(&app, data.revision)?;
+    let (data, _) = state.mutate(&app, |data| {
+        let item = data.containers.iter_mut().flat_map(|container| &mut container.shortcuts)
+            .find(|item| item.id == shortcut_id)
+            .ok_or_else(|| AppError::Message("快捷方式不存在".to_string()))?;
+        item.launch_count = item.launch_count.saturating_add(1);
+        item.last_launched_at = Some(now_ms());
+        data.revision = data.revision.saturating_add(1);
+        Ok(())
+    })?;
+    emit_data_changed(&app, data.revision, None)?;
     Ok(data)
 }
 
@@ -596,7 +629,7 @@ pub fn show_paths(paths: Vec<String>) -> Result<usize, AppError> {
 }
 
 #[tauri::command]
-pub fn export_backup(app: AppHandle) -> Result<Option<String>, AppError> {
+pub fn export_backup(app: AppHandle, state: State<DataState>) -> Result<Option<String>, AppError> {
     let Some(target) = rfd::FileDialog::new()
         .set_file_name(format!(
             "deskbox-backup-{}.json",
@@ -607,7 +640,8 @@ pub fn export_backup(app: AppHandle) -> Result<Option<String>, AppError> {
     else {
         return Ok(None);
     };
-    let data = storage::load(&storage::data_path(&app)?)?;
+    state.flush(&app)?;
+    let data = state.read(&app)?;
     storage::save(&target, &data)?;
     Ok(Some(target.to_string_lossy().to_string()))
 }
@@ -622,17 +656,14 @@ pub fn import_backup(app: AppHandle, state: State<DataState>) -> Result<Option<A
     };
     let raw = std::fs::read_to_string(source)?;
     let (mut imported, _) = storage::parse_and_migrate(&raw)?;
-    let _guard = state
-        .0
-        .lock()
-        .map_err(|_| AppError::Message("数据写入锁不可用".to_string()))?;
     let path = storage::data_path(&app)?;
-    let current = storage::load(&path)?;
+    let current = state.read(&app)?;
     storage::backup_before_import(&path)?;
     imported.revision = current.revision.max(imported.revision).saturating_add(1);
-    storage::save(&path, &imported)?;
+    state.replace(&app, imported.clone())?;
+    state.flush(&app)?;
     container_windows::close_missing(&app, &imported);
-    emit_data_changed(&app, imported.revision)?;
+    emit_data_changed(&app, imported.revision, None)?;
     Ok(Some(imported))
 }
 

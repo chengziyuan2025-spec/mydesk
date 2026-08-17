@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { createId } from "../data/defaults";
 import { applyOperation } from "../data/operations";
 import { platform } from "../services/platform";
+import { useDeskBoxStore } from "../stores/useDeskBoxStore";
 import type { AppData, AppOperation, ExternalLauncherEntry, LaunchTargetType, Settings, ShortcutItem, ToastMessage } from "../types";
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -13,7 +14,6 @@ export interface AddShortcutOptions {
   source?: ShortcutItem["source"];
   arguments?: string | null;
   workingDirectory?: string | null;
-  icon?: string | null;
   sourcePath?: string | null;
   hideSource?: boolean;
   notify?: boolean;
@@ -21,12 +21,14 @@ export interface AddShortcutOptions {
 }
 
 export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {}) {
-  const [data, setData] = useState<AppData | null>(null);
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const data = useDeskBoxStore((state) => state.data);
+  const toasts = useDeskBoxStore((state) => state.toasts);
+  const saveState = useDeskBoxStore((state) => state.saveState);
+  const setData = useDeskBoxStore((state) => state.setData);
+  const setToasts = useDeskBoxStore((state) => state.setToasts);
+  const setSaveState = useDeskBoxStore((state) => state.setSaveState);
   const dataRef = useRef<AppData | null>(null);
   const collectingRef = useRef(new Set<string>());
-  const iconRequestsRef = useRef(new Set<string>());
 
   useEffect(() => { dataRef.current = data; }, [data]);
 
@@ -53,8 +55,15 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
   useEffect(() => {
     let unlisten: () => void = () => undefined;
     let disposed = false;
-    void platform.onAppDataChanged((revision) => {
-      if ((dataRef.current?.revision ?? -1) >= revision) return;
+    void platform.onAppDataChanged((change) => {
+      const current = dataRef.current;
+      if ((current?.revision ?? -1) >= change.revision) return;
+      if (current && change.operation && change.revision === current.revision + 1) {
+        const next = applyOperation(current, change.operation);
+        dataRef.current = next;
+        setData(next);
+        return;
+      }
       void refresh().catch((error) => notify(`同步数据失败：${errorText(error)}`, "error"));
     }).then((stop) => { if (disposed) stop(); else unlisten = stop; });
     return () => { disposed = true; unlisten(); };
@@ -69,13 +78,10 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
     }
     setSaveState("saving");
     try {
-      const latest = await platform.applyOperation(operation);
-      if (!dataRef.current || latest.revision >= dataRef.current.revision) {
-        dataRef.current = latest;
-        setData(latest);
-      }
+      const commit = await platform.applyOperation(operation);
+      if (!dataRef.current || dataRef.current.revision !== commit.revision) await refresh();
       setSaveState("saved");
-      return latest;
+      return commit;
     } catch (error) {
       setSaveState("error");
       await refresh().catch(() => undefined);
@@ -83,17 +89,6 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
       throw error;
     }
   }, [notify, refresh]);
-
-  useEffect(() => {
-    if (!data || !platform.isDesktop()) return;
-    for (const shortcut of data.containers.flatMap((container) => container.shortcuts.filter((item) => !item.icon))) {
-      if (iconRequestsRef.current.has(shortcut.id)) continue;
-      iconRequestsRef.current.add(shortcut.id);
-      void platform.extractIcon(shortcut.path)
-        .then((icon) => icon ? runOperation({ type: "updateShortcutIcon", shortcutId: shortcut.id, icon }) : null)
-        .catch(() => undefined);
-    }
-  }, [data, runOperation]);
 
   const collectDesktopFile = useCallback(async (path: string) => {
     const current = dataRef.current;
@@ -106,8 +101,7 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
       if (!targetId) throw new Error("请先创建一个容器");
       const fileName = path.split(/[\\/]/).pop() ?? path;
       const name = fileName.replace(/\.(lnk|exe)$/i, "");
-      const icon = await platform.extractIcon(path).catch(() => null);
-      const shortcut: ShortcutItem = { id: createId("shortcut"), name, path, targetType: /^https?:\/\//i.test(path) ? "url" : "path", aliases: [], favorite: false, sourcePath: null, source: "manual", arguments: null, workingDirectory: null, icon, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null };
+      const shortcut: ShortcutItem = { id: createId("shortcut"), name, path, targetType: /^https?:\/\//i.test(path) ? "url" : "path", aliases: [], favorite: false, sourcePath: null, source: "manual", arguments: null, workingDirectory: null, icon: null, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null };
       await runOperation({ type: "addShortcut", containerId: targetId, shortcut });
       notify(`已自动收纳「${name}」`, "success");
       if (current.settings.deleteSource) await platform.recycleSource(path).catch((error) => notify(`源文件保留：${errorText(error)}`, "error"));
@@ -154,7 +148,6 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
     reorderContainer: (containerId: string, beforeContainerId: string | null) => runOperation({ type: "reorderContainer", containerId, beforeContainerId }),
     moveShortcut: (shortcutId: string, targetContainerId: string, beforeShortcutId: string | null = null) => runOperation({ type: "moveShortcut", shortcutId, targetContainerId, beforeShortcutId }),
     async addShortcut(containerId: string, name: string, path: string, options: AddShortcutOptions = {}) {
-      const icon = options.icon === undefined ? await platform.extractIcon(path).catch(() => null) : options.icon;
       const shortcut: ShortcutItem = {
         id: createId("shortcut"), name, path,
         targetType: options.targetType ?? (/^https?:\/\//i.test(path) ? "url" : "path"), aliases: [], favorite: false,
@@ -162,7 +155,8 @@ export function useDeskBox({ enableDesktopWatcher = true }: DeskBoxOptions = {})
         source: options.source ?? "manual",
         arguments: options.arguments ?? null,
         workingDirectory: options.workingDirectory ?? null,
-        icon, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null,
+        // Icons are resolved lazily by visible tiles and never persisted in AppData.
+        icon: null, createdAt: Date.now(), launchCount: 0, lastLaunchedAt: null,
       };
       await runOperation({ type: "addShortcut", containerId, shortcut });
       if (options.hideSource) await platform.hidePath(options.sourcePath ?? path);

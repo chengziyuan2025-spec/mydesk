@@ -1,5 +1,5 @@
 use crate::{
-    models::{sanitize_appearance, AppData, CURRENT_DATA_VERSION},
+    models::{sanitize_appearance, AppData, TrashEntry, CURRENT_DATA_VERSION},
     AppError,
 };
 use chrono::Local;
@@ -197,7 +197,49 @@ fn migrate_value(mut value: Value) -> Result<(Value, bool), AppError> {
         }
         migrated = true;
     }
+    if version < 6 {
+        let object = value.as_object_mut().ok_or_else(|| AppError::Message("数据根节点必须是对象".to_string()))?;
+        object.insert("version".to_string(), json!(6));
+        if let Some(settings) = object.get_mut("settings").and_then(Value::as_object_mut) {
+            let hotkeys = settings.entry("hotkeys".to_string()).or_insert(json!({}));
+            if let Some(hotkeys) = hotkeys.as_object_mut() {
+                hotkeys.entry("toggleContainers".to_string()).or_insert(json!("Ctrl+Shift+D"));
+                hotkeys.entry("settings".to_string()).or_insert(json!("Ctrl+Shift+Comma"));
+            }
+        }
+        // Icon data URIs make every cross-window update expensive. Icons are now loaded lazily from the cache.
+        visit_all_shortcuts(&mut value, &mut |item| { item.insert("icon".to_string(), Value::Null); });
+        migrated = true;
+    }
     Ok((value, migrated))
+}
+
+fn clear_legacy_shortcut_icons(data: &mut AppData) -> bool {
+    let mut changed = false;
+    let mut clear = |shortcut: &mut crate::models::ShortcutItem| {
+        if shortcut.icon.take().is_some() {
+            changed = true;
+        }
+    };
+    for container in &mut data.containers {
+        for shortcut in &mut container.shortcuts {
+            clear(shortcut);
+        }
+    }
+    for entry in &mut data.trash {
+        match entry {
+            TrashEntry::Shortcut { item, .. } => clear(item),
+            TrashEntry::Container { item, .. } => {
+                for shortcut in &mut item.shortcuts {
+                    clear(shortcut);
+                }
+            }
+        }
+    }
+    for entry in &mut data.external_launcher_entries {
+        if entry.icon.take().is_some() { changed = true; }
+    }
+    changed
 }
 
 pub fn parse_and_migrate(raw: &str) -> Result<(AppData, bool), AppError> {
@@ -206,7 +248,8 @@ pub fn parse_and_migrate(raw: &str) -> Result<(AppData, bool), AppError> {
     let mut data: AppData = serde_json::from_value(value)?;
     data.version = CURRENT_DATA_VERSION;
     sanitize_appearance(&mut data.settings.appearance);
-    Ok((data, migrated))
+    let cleared_icons = clear_legacy_shortcut_icons(&mut data);
+    Ok((data, migrated || cleared_icons))
 }
 
 pub fn load(path: &Path) -> Result<AppData, AppError> {
@@ -239,17 +282,37 @@ pub fn load(path: &Path) -> Result<AppData, AppError> {
     }
 }
 
-pub fn save(path: &Path, data: &AppData) -> Result<(), AppError> {
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let temp = path.with_extension("tmp");
-    fs::write(&temp, serde_json::to_vec_pretty(data)?)?;
-    if path.exists() {
-        fs::remove_file(path)?;
+    fs::write(&temp, bytes)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::{
+            core::PCWSTR,
+            Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
+        };
+        let from: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
+        let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe {
+            MoveFileExW(
+                PCWSTR(from.as_ptr()),
+                PCWSTR(to.as_ptr()),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+            .map_err(|error| AppError::Message(error.to_string()))?;
+        }
     }
+    #[cfg(not(windows))]
     fs::rename(temp, path)?;
     Ok(())
+}
+
+pub fn save(path: &Path, data: &AppData) -> Result<(), AppError> {
+    atomic_write(path, &serde_json::to_vec_pretty(data)?)
 }
 
 pub fn ensure_daily_backup(path: &Path) -> Result<(), AppError> {
@@ -295,7 +358,7 @@ mod tests {
         let raw = r#"{"version":1,"containers":[],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":""}}"#;
         let (data, migrated) = parse_and_migrate(raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 5);
+        assert_eq!(data.version, 6);
         assert_eq!(data.revision, 0);
     }
 
@@ -308,7 +371,7 @@ mod tests {
 
         let (data, migrated) = parse_and_migrate(&raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 5);
+        assert_eq!(data.version, 6);
         assert_eq!(
             data.containers[0].shortcuts[0].source,
             crate::models::ShortcutSource::Manual
@@ -358,9 +421,17 @@ mod tests {
         let raw = r#"{"version":4,"revision":1,"containers":[],"settings":{"theme":"dark","autoCollect":false,"deleteSource":false,"defaultContainerId":"","hotkeys":{"mainWindow":"Ctrl+Shift+H","quickLaunch":"Alt+Space","toggleContainers":null},"everything":{"enabled":false,"executablePath":null}},"externalLauncherEntries":[],"trash":[]}"#;
         let (data, migrated) = parse_and_migrate(raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 5);
+        assert_eq!(data.version, 6);
         assert_eq!(data.settings.appearance.background.kind, "none");
         assert_eq!(data.settings.appearance.background.overlay, 34);
         assert!(!data.settings.appearance.adaptive_accent);
+    }
+
+    #[test]
+    fn clears_icons_from_already_version_six_data() {
+        let raw = r#"{"version":6,"revision":0,"containers":[{"id":"active","name":"Active","hidden":false,"pinned":false,"shortcuts":[{"id":"shortcut","name":"App","path":"C:\\app.exe","icon":"data:image/png;base64,old","createdAt":1}]}],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":"active"},"externalLauncherEntries":[],"trash":[]}"#;
+        let (data, migrated) = parse_and_migrate(raw).unwrap();
+        assert!(migrated);
+        assert_eq!(data.containers[0].shortcuts[0].icon, None);
     }
 }

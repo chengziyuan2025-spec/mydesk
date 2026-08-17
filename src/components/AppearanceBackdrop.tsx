@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
 import { platform } from "../services/platform";
 
@@ -23,6 +23,8 @@ export function AppearanceBackdrop({ settings }: { settings: Settings }) {
   const mediaUrl = platform.backgroundUrl(background.assetPath);
   const [failed, setFailed] = useState(false);
   const [adaptiveAccent, setAdaptiveAccent] = useState<string | null>(null);
+  const [mediaActive, setMediaActive] = useState(() => document.visibilityState === "visible" && document.hasFocus());
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => { setFailed(false); }, [background.assetPath, background.kind]);
   useEffect(() => {
@@ -52,10 +54,29 @@ export function AppearanceBackdrop({ settings }: { settings: Settings }) {
     document.documentElement.style.removeProperty("--accent-soft");
   }, []);
 
+  useEffect(() => {
+    const update = () => setMediaActive(document.visibilityState === "visible" && document.hasFocus());
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    return () => {
+      document.removeEventListener("visibilitychange", update);
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (mediaActive) void video.play().catch(() => undefined);
+    else video.pause();
+  }, [mediaActive, background.kind, mediaUrl]);
+
   const showMedia = Boolean(mediaUrl && background.kind !== "none" && !failed);
   return <div className="appearance-backdrop" aria-hidden="true">
     {showMedia && background.kind === "image" && <img className="appearance-backdrop__media" src={mediaUrl ?? undefined} alt="" onError={() => setFailed(true)} />}
-    {showMedia && background.kind === "video" && <video className="appearance-backdrop__media" src={mediaUrl ?? undefined} autoPlay muted loop playsInline onError={() => setFailed(true)} />}
+    {showMedia && background.kind === "video" && <video ref={videoRef} className="appearance-backdrop__media" src={mediaUrl ?? undefined} muted loop playsInline preload="metadata" onError={() => setFailed(true)} />}
     {showMedia && <span className="appearance-backdrop__overlay" style={{ opacity: Math.max(0, Math.min(80, background.overlay)) / 100 }} />}
   </div>;
 }

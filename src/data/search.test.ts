@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultData } from "./defaults";
 import { directTarget, searchDeskBox } from "./search";
+import { pinyinTokens } from "./pinyin";
 
 describe("DeskBox search", () => {
   it("ranks exact shortcut names first", () => {
@@ -18,7 +19,7 @@ describe("DeskBox search", () => {
 
   it("matches standard pinyin initials and custom aliases", () => {
     const data = createDefaultData();
-    expect(searchDeskBox(data, "jsq")[0].title).toBe("计算器");
+    expect(searchDeskBox(data, "jsq", 30, { pinyinTokens })[0].title).toBe("计算器");
     data.containers[0].shortcuts[0].aliases = ["jsb"];
     expect(searchDeskBox(data, "jsb")[0].title).toBe("计算器");
   });
