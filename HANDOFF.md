@@ -1,9 +1,9 @@
 # DeskBox 项目交接文档
 
 > 文档日期：2026-08-16
-> 当前版本：0.3.0（数据格式 v4）
+> 当前版本：0.3.0（数据格式 v5）
 > 项目路径：`E:\vibecoding\hoverDesk`
-> 最新交接：优先阅读第 20 章“DeskBox 0.3.0 快捷键与统一快速启动”
+> 最新交接：优先阅读第 22 章“DeskBox 外观自定义”
 
 ## 1. 项目概况
 
@@ -695,3 +695,38 @@ npm run tauri dev
 - 不要同时运行多个 DeskBox 调试进程；遇到旧界面时先结束路径明确属于本仓库的 `deskbox.exe`，再运行 `npm run tauri dev`。
 - 下次优先在原生悬浮窗口中再次点击单项或批量隐藏，确认桌面属性是否变为 `Hidden, System`；若 Toast 报属性权限错误，记录具体路径和错误文案。
 - 继续修改前先运行 `git status` 和 `git log -1 --oneline --decorate`，确认不要重复提交已发布的 `3c4f091`。
+
+## 22. 2026-08-17 DeskBox 外观自定义
+
+### 22.1 数据与界面
+
+- 数据格式升级为 v5。`Settings` 新增 `appearance`：`accentColor` 与 `background`（`kind`、`assetPath`、`assetName`、`overlay`）；v1-v4 和浏览器 `localStorage` 数据均会补齐默认值。
+- 设置弹层新增主题色预设、自定义颜色、背景媒体预览/替换/移除以及 0-80% 背景遮罩。
+- 主页、悬浮工作区和快速启动共享 `AppearanceBackdrop`。图片居中 `cover`；视频采用 `muted`、`autoplay`、`loop`、`playsInline`。加载失败或媒体引用不存在时回退普通背景。
+- 自定义背景只突出内容区；主页、悬浮工作区和快速启动的顶部工具栏继续使用当前亮色或暗色主题表面，保证常用操作区稳定易读。
+- 主页容器概览和整理视图在工具栏下方保留额外顶部留白（窄屏同步收紧），让背景在内容上方有可见的展示空间。
+- 自定义强调色只覆盖 `--accent` 及其派生 hover/soft 色，不修改完整调色板。移除媒体或切换媒体在新设置保存成功后再尽力清理旧文件。
+
+### 22.2 媒体存储与安全边界
+
+- 新命令 `pick_background_media` 只接受 PNG/JPG/JPEG/WebP/GIF/MP4/WebM，并把文件复制到 `%APPDATA%\com.deskbox.app\assets`；原始文件可被移动或删除。
+- 导入复制针对 Windows 文件选择后可能的短暂占用重试 3 次；仍失败时会把原文件路径和底层 I/O 错误返回到界面 Toast。
+- 新命令 `delete_background_asset` 只允许删除该 assets 目录内真实存在的文件，避免前端传入任意路径删除文件。
+- `tauri.conf.json` 开启 asset protocol，范围限制为 `$APPDATA/assets/**/*`（Tauri 的 `$APPDATA` 已经包含应用标识）；`Cargo.toml` 启用 Tauri `protocol-asset` feature。前端用 `convertFileSrc` 供 `<img>` 和 `<video>` 加载。
+- 导出仍是 JSON，不携带二进制媒体。跨机器导入后若引用不存在，应用会显示普通背景；不影响其他配置。
+
+### 22.3 验证与后续验收
+
+- 2026-08-17 已修复原生 WebView2 图片背景 403：Tauri `$APPDATA` 已包含 `com.deskbox.app`，asset protocol 范围必须使用 `$APPDATA/assets/**/*`，不能重复拼接应用标识。实机验证主页、悬浮容器和快速启动窗口均成功加载现有 PNG（1933×1156）。
+- `npm run check` 通过：21 个 Vitest 测试、TypeScript/Vite 构建和 Cargo check 均通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 项通过、Everything 实机查询 1 项按设计忽略；`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` 通过。
+- Playwright 浏览器模式已验证主题色、图片选择/预览/移除、1280px 和 390px 设置布局，无控制台错误；截图位于 `output/playwright/appearance-settings.png`、`appearance-image-preview.png`、`appearance-mobile.png`。
+- 下次在原生 `npm run tauri dev` 窗口中导入一个 MP4/WebM 和一个图片，确认应用数据目录复制、三类窗口同步显示及视频实际解码；浏览器自动化未包含本地视频样本。
+
+### 22.4 本次对话：背景修复与布局微调
+
+- 用户反馈选择图片后背景没有变化。检查确认 JSON 设置与 `%APPDATA%\com.deskbox.app\assets` 中的导入文件均存在；WebView2 调试显示图片请求返回 `403 Forbidden`。
+- 根因是误将 Tauri 的 `$APPDATA` 当作系统 `%APPDATA%` 使用。该变量实际已解析到应用专属目录，修正为 `$APPDATA/assets/**/*` 后，主窗口、悬浮容器和快速启动窗口均成功加载同一张 PNG；临时远程调试端口已关闭，常规开发版仍可用。
+- 随后的视觉调整保持顶部标题栏、Workspace 工具栏、悬浮容器标题栏和快速启动搜索栏使用主题色，背景媒体展示在内容区，不干扰操作控件。
+- 主页工具栏上下留白收紧为桌面 `14px / 12px`、窄屏 `16px / 12px`；概览卡片和整理视图分别在工具栏下保留桌面 `18px`、窄屏 `14px` 的背景展示间距。
+- 本轮执行过 `npm run check`（21 项 Vitest、TypeScript/Vite、Cargo check）、Rust 测试（23 通过、1 忽略）、Clippy 零警告；布局微调后再次执行 `npm run build` 与 `git diff --check`。

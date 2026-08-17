@@ -1,5 +1,18 @@
 export type Theme = "light" | "dark";
 export type LaunchTargetType = "path" | "url" | "shellApp";
+export type BackgroundKind = "none" | "image" | "video";
+
+export interface BackgroundSettings {
+  kind: BackgroundKind;
+  assetPath: string | null;
+  assetName: string | null;
+  overlay: number;
+}
+
+export interface AppearanceSettings {
+  accentColor: string | null;
+  background: BackgroundSettings;
+}
 
 export interface ShortcutItem {
   id: string;
@@ -63,6 +76,7 @@ export interface ContainerWindowSettings {
 
 export interface Settings {
   theme: Theme;
+  appearance: AppearanceSettings;
   autoCollect: boolean;
   deleteSource: boolean;
   defaultContainerId: string;
@@ -135,12 +149,18 @@ export interface ContainerTrashEntry extends TrashBase {
 export type TrashEntry = ShortcutTrashEntry | ContainerTrashEntry;
 
 export interface AppData {
-  version: 4;
+  version: 5;
   revision: number;
   containers: ContainerItem[];
   settings: Settings;
   externalLauncherEntries: ExternalLauncherEntry[];
   trash: TrashEntry[];
+}
+
+export interface BackgroundMediaSelection {
+  kind: Exclude<BackgroundKind, "none">;
+  assetPath: string;
+  assetName: string;
 }
 
 export type AppOperation =

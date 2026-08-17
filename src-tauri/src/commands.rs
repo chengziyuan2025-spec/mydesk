@@ -7,8 +7,10 @@ use crate::{
     AppError,
 };
 use std::{
+    fs,
     path::Path,
     process::Command,
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -114,6 +116,82 @@ pub fn pick_shortcut_path() -> Option<String> {
         .add_filter("所有文件", &["*"])
         .pick_file()
         .map(|path| path.to_string_lossy().to_string())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundMediaSelection {
+    pub kind: String,
+    pub asset_path: String,
+    pub asset_name: String,
+}
+
+fn background_kind(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" => Some("image"),
+        "mp4" | "webm" => Some("video"),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub fn pick_background_media(app: AppHandle) -> Result<Option<BackgroundMediaSelection>, AppError> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp", "gif"])
+        .add_filter("视频", &["mp4", "webm"])
+        .pick_file()
+    else { return Ok(None); };
+    let kind = background_kind(&source).ok_or_else(|| AppError::Message("不支持的背景媒体格式".into()))?;
+    let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("bin").to_ascii_lowercase();
+    let assets = storage::background_assets_dir(&app)?;
+    let mut suffix = 0_u32;
+    let target = loop {
+        let candidate = assets.join(format!("background-{}-{suffix}.{extension}", now_ms()));
+        if !candidate.exists() { break candidate; }
+        suffix = suffix.saturating_add(1);
+    };
+    copy_background_media(&source, &target)?;
+    Ok(Some(BackgroundMediaSelection {
+        kind: kind.to_string(),
+        asset_path: target.to_string_lossy().to_string(),
+        asset_name: source.file_name().and_then(|value| value.to_str()).unwrap_or("背景媒体").to_string(),
+    }))
+}
+
+fn copy_background_media(source: &Path, target: &Path) -> Result<(), AppError> {
+    let mut last_error = None;
+    for attempt in 0..3 {
+        match fs::copy(source, target) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < 2 { thread::sleep(std::time::Duration::from_millis(160)); }
+            }
+        }
+    }
+    let error = last_error.expect("copy loop always records an error");
+    Err(AppError::Message(format!(
+        "无法复制背景媒体「{}」到 DeskBox 数据目录：{error}",
+        source.display()
+    )))
+}
+
+#[tauri::command]
+pub fn delete_background_asset(app: AppHandle, asset_path: String) -> Result<(), AppError> {
+    let assets = storage::background_assets_dir(&app)?;
+    let candidate = Path::new(asset_path.trim());
+    if !candidate.exists() { return Ok(()); }
+    let candidate = managed_background_asset_path(&assets, candidate)?;
+    fs::remove_file(candidate)?;
+    Ok(())
+}
+
+fn managed_background_asset_path(assets: &Path, candidate: &Path) -> Result<std::path::PathBuf, AppError> {
+    if !candidate.is_absolute() { return Err(AppError::Message("背景媒体路径无效".into())); }
+    let assets = assets.canonicalize()?;
+    let candidate = candidate.canonicalize()?;
+    if !candidate.starts_with(&assets) { return Err(AppError::Message("只能删除 DeskBox 导入的背景媒体".into())); }
+    Ok(candidate)
 }
 
 #[tauri::command]
@@ -565,6 +643,40 @@ pub fn get_runtime_status(status: State<RuntimeStatus>) -> Result<Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_background_media_extensions() {
+        assert_eq!(background_kind(Path::new("C:\\image.webp")), Some("image"));
+        assert_eq!(background_kind(Path::new("C:\\video.webm")), Some("video"));
+        assert_eq!(background_kind(Path::new("C:\\unsafe.exe")), None);
+    }
+
+    #[test]
+    fn only_accepts_assets_inside_the_managed_directory() {
+        let root = std::env::temp_dir().join(format!("deskbox-background-test-{}", now_ms()));
+        let assets = root.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        let managed = assets.join("background.png");
+        let outside = root.join("outside.png");
+        fs::write(&managed, []).unwrap();
+        fs::write(&outside, []).unwrap();
+        assert!(managed_background_asset_path(&assets, &managed).is_ok());
+        assert!(managed_background_asset_path(&assets, &outside).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copies_background_media_into_the_managed_directory() {
+        let root = std::env::temp_dir().join(format!("deskbox-background-copy-test-{}", now_ms()));
+        let source = root.join("source.png");
+        let assets = root.join("assets");
+        let target = assets.join("background.png");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(&source, [1_u8, 2, 3, 4]).unwrap();
+        copy_background_media(&source, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), vec![1, 2, 3, 4]);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn gets_complete_file_name_from_path() {

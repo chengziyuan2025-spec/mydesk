@@ -179,6 +179,8 @@ pub fn run() {
             commands::restore_container_mouse_interaction,
             commands::show_quick_launch,
             commands::pick_shortcut_path,
+            commands::pick_background_media,
+            commands::delete_background_asset,
             commands::extract_icon,
             commands::resolve_shortcut,
             commands::is_directory,

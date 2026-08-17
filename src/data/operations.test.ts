@@ -3,7 +3,7 @@ import { createDefaultData } from "./defaults";
 import { applyOperation, migrateBrowserData } from "./operations";
 
 describe("DeskBox operations", () => {
-  it("migrates v1 active and trashed shortcuts to v4", () => {
+  it("migrates v1 active and trashed shortcuts to v5", () => {
     const legacy = createDefaultData() as unknown as Record<string, unknown>;
     legacy.version = 1;
     delete legacy.revision;
@@ -17,12 +17,22 @@ describe("DeskBox operations", () => {
       { kind: "container", id: "trash-container", deletedAt: 1, originalIndex: 0, item: { id: "old", name: "Old", hidden: false, pinned: false, shortcuts: [{ ...active, id: "nested" }] } },
     ];
     const migrated = migrateBrowserData(legacy);
-    expect(migrated.version).toBe(4);
+    expect(migrated.version).toBe(5);
     expect(migrated.settings.hotkeys.mainWindow).toBe("Ctrl+Shift+H");
     expect(migrated.externalLauncherEntries).toEqual([]);
+    expect(migrated.settings.appearance).toEqual({ accentColor: null, background: { kind: "none", assetPath: null, assetName: null, overlay: 34 } });
     expect(migrated.containers[0].shortcuts[0]).toMatchObject({ source: "manual", arguments: null, workingDirectory: null });
     expect(migrated.trash[0].kind === "shortcut" && migrated.trash[0].item.source).toBe("manual");
     expect(migrated.trash[1].kind === "container" && migrated.trash[1].item.shortcuts[0].workingDirectory).toBeNull();
+  });
+
+  it("migrates legacy settings without appearance", () => {
+    const legacy = createDefaultData() as unknown as Record<string, unknown>;
+    legacy.version = 4;
+    delete (legacy.settings as Record<string, unknown>).appearance;
+    const migrated = migrateBrowserData(legacy);
+    expect(migrated.version).toBe(5);
+    expect(migrated.settings.appearance.background.kind).toBe("none");
   });
 
   it("migrates v2 shortcut metadata defaults", () => {
@@ -46,6 +56,15 @@ describe("DeskBox operations", () => {
     const data = createDefaultData();
     const next = applyOperation(data, { type: "setContainerPinned", containerId: data.containers[0].id, pinned: true });
     expect(next.containers[0].pinned).toBe(true);
+  });
+
+  it("persists appearance settings through updateSettings", () => {
+    const data = createDefaultData();
+    const next = applyOperation(data, {
+      type: "updateSettings",
+      settings: { ...data.settings, appearance: { accentColor: "#2879d0", background: { kind: "image", assetPath: "C:\\assets\\wallpaper.png", assetName: "wallpaper.png", overlay: 48 } } },
+    });
+    expect(next.settings.appearance).toEqual({ accentColor: "#2879d0", background: { kind: "image", assetPath: "C:\\assets\\wallpaper.png", assetName: "wallpaper.png", overlay: 48 } });
   });
 
   it("restores a shortcut into a fallback container", () => {

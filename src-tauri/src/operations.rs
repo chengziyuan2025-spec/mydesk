@@ -1,5 +1,5 @@
 use crate::{
-    models::{AppData, AppOperation, ContainerItem, TrashEntry},
+    models::{sanitize_appearance, AppData, AppOperation, ContainerItem, TrashEntry},
     AppError,
 };
 
@@ -296,6 +296,7 @@ pub fn apply(data: &mut AppData, operation: AppOperation) -> Result<(), AppError
         }
         AppOperation::EmptyTrash => data.trash.clear(),
     }
+    sanitize_appearance(&mut data.settings.appearance);
     data.revision = data.revision.saturating_add(1);
     Ok(())
 }

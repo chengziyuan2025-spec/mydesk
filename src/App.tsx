@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive } from "lucide-react";
 import { useDeskBox } from "./hooks/useDeskBox";
 import { AddContainerModal } from "./components/AddContainerModal";
+import { AppearanceBackdrop } from "./components/AppearanceBackdrop";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ContainerCard } from "./components/ContainerCard";
 import { FloatingContainer } from "./components/FloatingContainer";
@@ -41,7 +42,6 @@ function DeskBoxHome() {
   const [files, setFiles] = useState<EverythingSearchItem[]>([]);
   const requestRef = useRef(0);
 
-  useEffect(() => { if (data) document.documentElement.dataset.theme = data.settings.theme; }, [data?.settings.theme]);
   useEffect(() => { void platform.getSystemAppCatalog().then(setSystemApps).catch(() => undefined); }, []);
   useEffect(() => {
     if (!data?.settings.everything.enabled || !query.trim()) { setFiles([]); return; }
@@ -96,6 +96,7 @@ function DeskBoxHome() {
 
   return (
     <main className="app-shell">
+      <AppearanceBackdrop settings={data.settings} />
       <TitleBar />
       <div className="workspace">
         <Toolbar query={query} view={view} visibleCount={visibleContainers.length} totalCount={totalShortcuts} trashCount={data.trash.length} onQueryChange={setQuery} onViewChange={setView} onAddContainer={() => setDialog({ kind: "add-container" })} onOpenSettings={() => setDialog({ kind: "settings" })} onOpenTrash={() => setDialog({ kind: "trash" })} onOpenQuickLaunch={() => void platform.showQuickLaunch()} onShowAll={() => void platform.showAllContainerWindows()} onHideAll={() => void platform.hideAllContainerWindows()} onRestoreInteraction={() => void platform.restoreContainerMouseInteraction()} />
@@ -112,7 +113,7 @@ function DeskBoxHome() {
       </div>
       <footer className="statusbar"><span className={`save-indicator save-indicator--${saveState}`}><i />{saveState === "saving" ? "正在保存" : saveState === "error" ? "保存失败" : "数据已同步"}</span><span>DeskBox 0.3.0</span></footer>
       {dialog.kind === "add-container" && <AddContainerModal onAdd={(name) => void actions.addContainer(name)} onClose={() => setDialog({ kind: "none" })} />}
-      {dialog.kind === "settings" && <SettingsPanel data={data} onChange={(settings) => void actions.updateSettings(settings)} onRestoreContainer={(id) => void actions.setContainerHidden(id, false)} onExport={() => void actions.exportBackup()} onImport={() => void actions.importBackup()} onOpenBackupDirectory={() => void actions.openBackupDirectory()} onNotify={notify} onClose={() => setDialog({ kind: "none" })} />}
+      {dialog.kind === "settings" && <SettingsPanel data={data} onChange={actions.updateSettings} onRestoreContainer={(id) => void actions.setContainerHidden(id, false)} onExport={() => void actions.exportBackup()} onImport={() => void actions.importBackup()} onOpenBackupDirectory={() => void actions.openBackupDirectory()} onNotify={notify} onClose={() => setDialog({ kind: "none" })} />}
       {dialog.kind === "trash" && <TrashPanel data={data} onRestore={actions.restoreTrash} onPermanentDelete={actions.permanentDeleteTrash} onEmpty={actions.emptyTrash} onClose={() => setDialog({ kind: "none" })} />}
       {dialog.kind === "delete-container" && <ConfirmDialog title={`移除「${dialog.name}」？`} message="容器及其中的快捷方式会进入 DeskBox 回收站，不会删除电脑中的原始文件。" confirmText="移入回收站" onConfirm={() => void deleteContainer(dialog.containerId)} onClose={() => setDialog({ kind: "none" })} />}
       <ToastStack toasts={toasts} />

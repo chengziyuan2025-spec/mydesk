@@ -1,4 +1,5 @@
 import { createId } from "./defaults";
+import { normalizeAppearanceSettings } from "./appearance";
 import type { AppData, AppOperation, ContainerItem, ShortcutItem, TrashEntry } from "../types";
 
 const clone = (data: AppData): AppData => structuredClone(data);
@@ -135,14 +136,15 @@ export function applyOperation(current: AppData, operation: AppOperation): AppDa
 export function migrateBrowserData(value: unknown): AppData {
   if (!value || typeof value !== "object") throw new Error("无效数据");
   const raw = value as Record<string, unknown>;
-  if (Number(raw.version ?? 1) > 4) throw new Error("数据版本过高");
+  if (Number(raw.version ?? 1) > 5) throw new Error("数据版本过高");
   const data = structuredClone(value) as AppData;
-  data.version = 4;
+  data.version = 5;
   data.revision ??= 0;
   data.trash ??= [];
   data.externalLauncherEntries ??= [];
   data.settings.hotkeys ??= { mainWindow: "Ctrl+Shift+H", quickLaunch: "Alt+Space", toggleContainers: null };
   data.settings.everything ??= { enabled: false, executablePath: null };
+  data.settings.appearance = normalizeAppearanceSettings(data.settings.appearance);
 
   const migrateShortcut = (shortcut: ShortcutItem) => {
     shortcut.source ??= "manual";

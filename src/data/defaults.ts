@@ -4,7 +4,7 @@ export const createId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 export const createDefaultData = (): AppData => ({
-  version: 4,
+  version: 5,
   revision: 0,
   containers: [{
     id: "sample-container",
@@ -17,7 +17,15 @@ export const createDefaultData = (): AppData => ({
       { id: "sample-notepad", name: "记事本", path: "C:\\Windows\\System32\\notepad.exe", targetType: "path", aliases: [], favorite: false, sourcePath: null, source: "manual", arguments: null, workingDirectory: null, icon: null, createdAt: 0, launchCount: 0, lastLaunchedAt: null },
     ],
   }],
-  settings: { theme: "light", autoCollect: true, deleteSource: false, defaultContainerId: "sample-container", hotkeys: { mainWindow: "Ctrl+Shift+H", quickLaunch: "Alt+Space", toggleContainers: null }, everything: { enabled: false, executablePath: null } },
+  settings: {
+    theme: "light",
+    appearance: { accentColor: null, background: { kind: "none", assetPath: null, assetName: null, overlay: 34 } },
+    autoCollect: true,
+    deleteSource: false,
+    defaultContainerId: "sample-container",
+    hotkeys: { mainWindow: "Ctrl+Shift+H", quickLaunch: "Alt+Space", toggleContainers: null },
+    everything: { enabled: false, executablePath: null },
+  },
   externalLauncherEntries: [],
   trash: [],
 });

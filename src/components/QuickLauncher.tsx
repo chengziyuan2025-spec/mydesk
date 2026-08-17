@@ -6,6 +6,7 @@ import { platform } from "../services/platform";
 import { appWindowStore } from "../stores/useAppStore";
 import type { EverythingSearchItem, ExternalLauncherEntry, SystemAppCatalogItem } from "../types";
 import { AliasEditor } from "./AliasEditor";
+import { AppearanceBackdrop } from "./AppearanceBackdrop";
 import { SearchResults, type SearchAction } from "./SearchResults";
 import { ToastStack } from "./ToastStack";
 
@@ -108,6 +109,7 @@ export function QuickLauncher() {
   };
 
   return <main className="quick-launcher">
+    {data && <AppearanceBackdrop settings={data.settings} />}
     <div className="quick-search"><Search size={22} strokeWidth={1.65} /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索应用、容器、文件或输入算式" onKeyDown={(event) => {
       if (event.key === "Escape") void platform.hide();
       if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((value) => Math.min(value + 1, results.length - 1)); }

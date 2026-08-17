@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_DATA_VERSION: u32 = 4;
+pub const CURRENT_DATA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -105,8 +105,58 @@ pub struct EverythingSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct BackgroundSettings {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub asset_path: Option<String>,
+    #[serde(default)]
+    pub asset_name: Option<String>,
+    #[serde(default = "default_background_overlay")]
+    pub overlay: u8,
+}
+
+fn default_background_overlay() -> u8 { 34 }
+
+impl Default for BackgroundSettings {
+    fn default() -> Self { Self { kind: "none".into(), asset_path: None, asset_name: None, overlay: default_background_overlay() } }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceSettings {
+    #[serde(default)]
+    pub accent_color: Option<String>,
+    #[serde(default)]
+    pub background: BackgroundSettings,
+}
+
+pub fn sanitize_appearance(settings: &mut AppearanceSettings) {
+    settings.accent_color = settings.accent_color.as_ref().and_then(|value| {
+        let valid = value.len() == 7
+            && value.starts_with('#')
+            && value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit);
+        valid.then(|| value.to_ascii_lowercase())
+    });
+    if !matches!(settings.background.kind.as_str(), "image" | "video") {
+        settings.background.kind = "none".into();
+        settings.background.asset_path = None;
+        settings.background.asset_name = None;
+    }
+    settings.background.overlay = settings.background.overlay.min(80);
+    if settings.background.asset_path.as_deref().map(str::trim).filter(|value| !value.is_empty()).is_none() {
+        settings.background.kind = "none".into();
+        settings.background.asset_path = None;
+        settings.background.asset_name = None;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub theme: String,
+    #[serde(default)]
+    pub appearance: AppearanceSettings,
     pub auto_collect: bool,
     pub delete_source: bool,
     pub default_container_id: String,
@@ -299,6 +349,7 @@ impl Default for AppData {
             }],
             settings: Settings {
                 theme: "light".to_string(),
+                appearance: AppearanceSettings::default(),
                 auto_collect: true,
                 delete_source: false,
                 default_container_id: container_id,
@@ -325,5 +376,15 @@ mod tests {
             serde_json::to_string(&ShortcutSource::DragDrop).unwrap(),
             "\"drag_drop\""
         );
+    }
+
+    #[test]
+    fn sanitizes_invalid_appearance_values() {
+        let mut appearance = AppearanceSettings { accent_color: Some("blue".into()), background: BackgroundSettings { kind: "unknown".into(), asset_path: None, asset_name: Some("old.png".into()), overlay: 100 } };
+        sanitize_appearance(&mut appearance);
+        assert_eq!(appearance.accent_color, None);
+        assert_eq!(appearance.background.kind, "none");
+        assert_eq!(appearance.background.asset_name, None);
+        assert_eq!(appearance.background.overlay, 80);
     }
 }

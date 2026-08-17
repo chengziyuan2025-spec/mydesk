@@ -9,6 +9,7 @@ import { useDeskBox } from "../hooks/useDeskBox";
 import type { AppData, ContainerItem, ContainerWindowSettings, ShortcutItem } from "../types";
 import { platform } from "../services/platform";
 import { AddShortcutModal } from "./AddShortcutModal";
+import { AppearanceBackdrop } from "./AppearanceBackdrop";
 import { IconButton } from "./IconButton";
 import { ShortcutTile } from "./ShortcutTile";
 import { ToastStack } from "./ToastStack";
@@ -43,7 +44,6 @@ export function FloatingContainer({ containerId, onBeforeAdd }: FloatingContaine
   const container = data?.containers.find((item) => item.id === activeContainerId);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  useEffect(() => { if (data) document.documentElement.dataset.theme = data.settings.theme; }, [data?.settings.theme]);
   useEffect(() => { void platform.getContainerWindowSettings(activeContainerId).then(setWindowSettings).catch(() => undefined); }, [activeContainerId]);
   useEffect(() => {
     if (!container) return;
@@ -229,6 +229,7 @@ export function FloatingContainer({ containerId, onBeforeAdd }: FloatingContaine
 
   return (
     <main className={`floating-shell ${windowSettings?.collapsed ? "is-collapsed" : ""} ${windowSettings?.locked ? "is-locked" : ""} ${autoHidden ? `is-auto-hidden is-auto-hidden--${windowSettings?.snapEdge}` : ""}`} onMouseEnter={() => autoHidden && setAutoHidden(false)} onMouseLeave={() => { if (windowSettings?.autoHide && windowSettings.snapEdge !== "none") window.setTimeout(() => setAutoHidden(true), 450); }}>
+      <AppearanceBackdrop settings={data.settings} />
       <header className="floating-titlebar" onMouseDown={startDragging}>
         <div className="floating-titlebar__name"><span aria-hidden="true" />
           {editingName ? <input autoFocus className="floating-titlebar__input" data-window-control="rename" value={draftName} maxLength={24} onChange={(event) => setDraftName(event.target.value)} onClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onBlur={commitName} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") commitName(); if (event.key === "Escape") { setDraftName(container.name); setEditingName(false); } }} /> : <strong onDoubleClick={(event) => { event.stopPropagation(); beginRename(); }} title="双击重命名">{container.name}</strong>}

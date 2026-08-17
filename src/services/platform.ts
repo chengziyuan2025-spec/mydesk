@@ -1,9 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppData, AppOperation, ContainerWindowSettings, EverythingSearchItem, HotkeyAction, HotkeyStatus, LaunchTargetType, MonitorInfo, SystemAppCatalogItem } from "../types";
+import type { AppData, AppOperation, BackgroundMediaSelection, ContainerWindowSettings, EverythingSearchItem, HotkeyAction, HotkeyStatus, LaunchTargetType, MonitorInfo, SystemAppCatalogItem } from "../types";
 import { createDefaultData } from "../data/defaults";
 import { applyOperation, migrateBrowserData } from "../data/operations";
+import { backgroundKindFromFileName } from "../data/appearance";
 
 const STORAGE_KEY = "deskbox-browser-data";
 const isTauri = () => "__TAURI_INTERNALS__" in window;
@@ -37,6 +38,31 @@ export const platform = {
     return data;
   },
   async pickPath(): Promise<string | null> { return isTauri() ? invoke<string | null>("pick_shortcut_path") : null; },
+  async pickBackgroundMedia(): Promise<BackgroundMediaSelection | null> {
+    if (isTauri()) return invoke<BackgroundMediaSelection | null>("pick_background_media");
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm";
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) { resolve(null); return; }
+        const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : backgroundKindFromFileName(file.name);
+        if (!kind) { resolve(null); return; }
+        const reader = new FileReader();
+        reader.onload = () => resolve({ kind, assetPath: String(reader.result), assetName: file.name });
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    });
+  },
+  async deleteBackgroundAsset(assetPath: string): Promise<void> { if (isTauri()) await invoke("delete_background_asset", { assetPath }); },
+  backgroundUrl(assetPath: string | null): string | null {
+    if (!assetPath) return null;
+    if (assetPath.startsWith("data:")) return assetPath;
+    return isTauri() ? convertFileSrc(assetPath) : null;
+  },
   async resolveShortcut(path: string): Promise<ShortcutInfo> {
     if (!isTauri()) return { name: path.split(/[\\/]/).pop()?.replace(/\.lnk$/i, "") ?? path, targetPath: path, arguments: null, workingDirectory: null };
     return invoke<ShortcutInfo>("resolve_shortcut", { path });

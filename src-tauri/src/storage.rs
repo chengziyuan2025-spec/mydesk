@@ -1,5 +1,5 @@
 use crate::{
-    models::{AppData, CURRENT_DATA_VERSION},
+    models::{sanitize_appearance, AppData, CURRENT_DATA_VERSION},
     AppError,
 };
 use chrono::Local;
@@ -32,6 +32,12 @@ pub fn icon_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
         .app_cache_dir()
         .map_err(|error| AppError::Message(error.to_string()))?
         .join("icons");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub fn background_assets_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    let dir = data_path(app)?.with_file_name("assets");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -180,6 +186,17 @@ fn migrate_value(mut value: Value) -> Result<(Value, bool), AppError> {
         });
         migrated = true;
     }
+    if version < 5 {
+        let object = value.as_object_mut().ok_or_else(|| AppError::Message("数据根节点必须是对象".to_string()))?;
+        object.insert("version".to_string(), json!(5));
+        if let Some(settings) = object.get_mut("settings").and_then(Value::as_object_mut) {
+            settings.entry("appearance".to_string()).or_insert(json!({
+                "accentColor": null,
+                "background": { "kind": "none", "assetPath": null, "assetName": null, "overlay": 34 }
+            }));
+        }
+        migrated = true;
+    }
     Ok((value, migrated))
 }
 
@@ -188,6 +205,7 @@ pub fn parse_and_migrate(raw: &str) -> Result<(AppData, bool), AppError> {
     let (value, migrated) = migrate_value(value)?;
     let mut data: AppData = serde_json::from_value(value)?;
     data.version = CURRENT_DATA_VERSION;
+    sanitize_appearance(&mut data.settings.appearance);
     Ok((data, migrated))
 }
 
@@ -277,7 +295,7 @@ mod tests {
         let raw = r#"{"version":1,"containers":[],"settings":{"theme":"light","autoCollect":false,"deleteSource":false,"defaultContainerId":""}}"#;
         let (data, migrated) = parse_and_migrate(raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 4);
+        assert_eq!(data.version, 5);
         assert_eq!(data.revision, 0);
     }
 
@@ -290,7 +308,7 @@ mod tests {
 
         let (data, migrated) = parse_and_migrate(&raw).unwrap();
         assert!(migrated);
-        assert_eq!(data.version, 4);
+        assert_eq!(data.version, 5);
         assert_eq!(
             data.containers[0].shortcuts[0].source,
             crate::models::ShortcutSource::Manual
@@ -333,5 +351,15 @@ mod tests {
     fn rejects_future_data() {
         let raw = r#"{"version":99}"#;
         assert!(parse_and_migrate(raw).is_err());
+    }
+
+    #[test]
+    fn migrates_v4_appearance_defaults() {
+        let raw = r#"{"version":4,"revision":1,"containers":[],"settings":{"theme":"dark","autoCollect":false,"deleteSource":false,"defaultContainerId":"","hotkeys":{"mainWindow":"Ctrl+Shift+H","quickLaunch":"Alt+Space","toggleContainers":null},"everything":{"enabled":false,"executablePath":null}},"externalLauncherEntries":[],"trash":[]}"#;
+        let (data, migrated) = parse_and_migrate(raw).unwrap();
+        assert!(migrated);
+        assert_eq!(data.version, 5);
+        assert_eq!(data.settings.appearance.background.kind, "none");
+        assert_eq!(data.settings.appearance.background.overlay, 34);
     }
 }
