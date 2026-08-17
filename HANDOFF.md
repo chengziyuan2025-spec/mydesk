@@ -661,3 +661,37 @@ npm run tauri dev
 - 前端当前有 16 个 Vitest 测试；Rust 默认测试为 17 项通过、1 项忽略，另有需要真实且完成索引的 Everything Query2 IPC 显式集成测试和系统应用目录扫描。
 - Playwright 已验证 `jsq`、自定义 `jsb`、单位换算、结果菜单、别名标签和快捷键录制；截图位于 `output/playwright/quick-launch-03.png` 与 `settings-hotkeys-03.png`。
 - 真实 Everything 查询回复使用官方 SDK 默认 ID `0`；`cargo test --manifest-path src-tauri/Cargo.toml everything_ipc::tests::queries_running_everything_when_available -- --ignored` 已通过，实机测试结束后已退出本次临时启动的 Everything 进程。
+
+## 21. 2026-08-17 本次对话交接：源文件隐藏切换与 GitHub 发布
+
+### 21.1 本次完成内容
+
+- 修复源文件隐藏只变淡的问题：Windows 后端同时设置 `FILE_ATTRIBUTE_HIDDEN` 和 `FILE_ATTRIBUTE_SYSTEM`，并调用 `SHChangeNotify(SHCNE_ATTRIBUTES, SHCNF_PATHW, ...)` 通知资源管理器刷新。
+- `set_local_path_hidden` 在设置后回读属性并校验；属性没有按预期更新时返回明确错误，不再显示假成功 Toast。
+- 新增 `toggle_path_hidden` 和 `get_path_hidden` 命令，前端通过 `platform.togglePathHidden` / `platform.getPathHidden` 使用。
+- 单个快捷方式右键菜单合并为一个状态菜单项：可见时显示“隐藏源文件”，隐藏后显示“恢复源文件显示”。
+- 悬浮容器标题栏的批量按钮合并为一个状态按钮，根据所有本地源文件状态在“隐藏全部源文件”和“恢复全部源文件显示”之间切换。
+- 新增 Windows 临时文件测试，确认 Hidden/System 属性设置与恢复均正确。
+
+### 21.2 Windows 显示边界与当前机器状态
+
+- Windows 注册表当前为 `Hidden=1`、`ShowSuperHidden=0`，即隐藏受保护系统文件仍关闭；标准设置下 Hidden + System 文件应从桌面消失。
+- 若用户关闭“隐藏受保护的操作系统文件”，Windows 会强制显示 System 文件，即使属性正确也会显示淡色；文件属性方案无法覆盖该系统显示选项，除非移动或改名源文件，本项目不做破坏原路径的处理。
+- 曾检查 `%APPDATA%\com.deskbox.app\deskbox-data.json`：当前若干拖入项目 `sourcePath` 为 `null`，前端会回退使用 `path`；检查时桌面文件仍为普通 `Archive/Directory` 属性，说明此前点击没有真正写入属性。现在后端会回读验证并在失败时报告原因。
+
+### 21.3 验证与发布
+
+- `npm run check`：Vitest 16 项通过、TypeScript/Vite 构建通过、Cargo check 通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml`：18 项通过，Everything 实机测试 1 项按设计忽略。
+- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过。
+- `git diff --check`：通过；仅有 Windows Git 的 LF/CRLF 提示。
+- Playwright 已验证主工作区、悬浮工作区、右键隐藏/恢复菜单和 420px 窄屏，无控制台错误。
+- 已提交并推送 GitHub：仓库 `https://github.com/chengziyuan2025-spec/mydesk.git`，分支 `main`，提交 `3c4f091 feat: release DeskBox 0.3.0`。
+- 当前工作树干净；`HEAD` 与 `origin/main` 均指向 `3c4f091`。
+
+### 21.4 运行状态与下次对话建议
+
+- 当前开发版由 `npm run tauri dev` 启动，Vite 地址为 `http://127.0.0.1:1420/`，原生进程路径为 `E:\vibecoding\hoverDesk\src-tauri\target\debug\deskbox.exe`。
+- 不要同时运行多个 DeskBox 调试进程；遇到旧界面时先结束路径明确属于本仓库的 `deskbox.exe`，再运行 `npm run tauri dev`。
+- 下次优先在原生悬浮窗口中再次点击单项或批量隐藏，确认桌面属性是否变为 `Hidden, System`；若 Toast 报属性权限错误，记录具体路径和错误文案。
+- 继续修改前先运行 `git status` 和 `git log -1 --oneline --decorate`，确认不要重复提交已发布的 `3c4f091`。
