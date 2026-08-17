@@ -29,6 +29,7 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
   const usableKind = assetPath && kind !== "none" ? kind : "none";
   return {
     accentColor: normalizeAccentColor(raw.accentColor),
+    adaptiveAccent: raw.adaptiveAccent === true,
     background: { kind: usableKind, assetPath, assetName, overlay: clampBackgroundOverlay(backgroundRaw.overlay) },
   };
 }

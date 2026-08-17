@@ -730,3 +730,30 @@ npm run tauri dev
 - 随后的视觉调整保持顶部标题栏、Workspace 工具栏、悬浮容器标题栏和快速启动搜索栏使用主题色，背景媒体展示在内容区，不干扰操作控件。
 - 主页工具栏上下留白收紧为桌面 `14px / 12px`、窄屏 `16px / 12px`；概览卡片和整理视图分别在工具栏下保留桌面 `18px`、窄屏 `14px` 的背景展示间距。
 - 本轮执行过 `npm run check`（21 项 Vitest、TypeScript/Vite、Cargo check）、Rust 测试（23 通过、1 忽略）、Clippy 零警告；布局微调后再次执行 `npm run build` 与 `git diff --check`。
+
+## 23. 2026-08-17 本次对话：原生 Dock 与壁纸自适应主题
+
+### 23.1 完成内容
+
+- 容器布局文件 `%APPDATA%\com.deskbox.app\deskbox-container-windows.json` 新增可选 `docked`、`dockSide` 字段；旧布局缺少字段时按未停靠处理，不影响原有位置、折叠、透明度、鼠标穿透、吸附边缘和虚拟桌面配置。
+- `src-tauri/src/container_windows.rs` 现在在 `WindowEvent::Moved` 中实现真实左右 Dock：开启“贴边自动隐藏”后，窗口到达左右工作区边缘时分别移至 `workArea.x - width + 4` 或 `workArea.x + workArea.width - 4`，并持久化隐藏坐标与边缘状态。
+- Dock 的 4px 可见区仍接收鼠标。鼠标进入会通过 `reveal_container_window_dock` 恢复到对应边缘的展开位置；鼠标离开且没有按压/拖动操作时，前端延迟 1 秒调用 `dock_container_window` 重新隐藏。旧的 CSS transform 假隐藏已移除。
+- Dock 隐藏状态临时关闭 `clickThrough`，确保热区可用；展开后恢复用户的鼠标穿透配置。程序恢复位置产生的 `Moved` 事件会被识别为恢复状态，不会立即再次隐藏。
+- 数据格式继续为 v5。`AppearanceSettings` 新增默认值为 `false` 的 `adaptiveAccent`；Rust 数据读取和浏览器 `localStorage` 归一化都会为旧 v5 记录补齐该字段。
+- 新增 Rust 命令 `get_wallpaper_dominant_color`。Windows 端通过 `IDesktopWallpaper` 获取壁纸路径，用 `image` crate 缩放至 1x1 取平均 RGB，返回小写 `#rrggbb`；COM、路径、解码或取色失败时返回 `None`，界面不显示报错。
+- 主页、悬浮容器和快速启动共用的 `AppearanceBackdrop` 在“自适应”开启后立即取色，并每 30 秒刷新 `--accent`。取色失败时保留用户自定义色或原有默认色；关闭开关会立即恢复原配色。设置弹层的主题色区域新增“自适应”开关。
+
+### 23.2 关键文件
+
+- `src-tauri/src/container_windows.rs`：Dock 状态机、坐标计算、布局持久化、恢复/重新停靠命令和布局兼容测试。
+- `src-tauri/src/wallpaper.rs`：Windows 壁纸路径与平均色提取；`Cargo.toml` 新增 `image` 依赖。
+- `src-tauri/src/commands.rs`、`src-tauri/src/lib.rs`：注册 Dock 和壁纸取色命令。
+- `src/components/FloatingContainer.tsx`：4px 热区恢复、离开延迟停靠和指针操作保护。
+- `src/components/AppearanceBackdrop.tsx`、`src/components/SettingsPanel.tsx`：自适应主题色刷新与开关。
+
+### 23.3 验证与后续验收
+
+- `npm run check` 已通过：22 个 Vitest 测试、TypeScript/Vite 构建和 Cargo check 均通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml` 已通过：26 项通过，Everything 实机查询 1 项按设计忽略；新增 Dock 旧布局兼容、左右 4px 坐标、v5 自适应默认值与 HEX 格式测试。
+- `git diff --check` 已通过。开发服务器当前可用地址为 `http://127.0.0.1:1421/`；默认 1420 端口在本机已被现有 Vite 服务占用。
+- 尚需在原生 `npm run tauri dev` 窗口人工确认：左右拖到边缘后只露出 4px、热区恢复、离开 1 秒重藏、重启后恢复停靠状态，以及与折叠、透明度、鼠标穿透组合时的实际 WebView2 行为。

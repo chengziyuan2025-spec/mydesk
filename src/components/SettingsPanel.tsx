@@ -102,6 +102,7 @@ export function SettingsPanel({ data, onChange, onRestoreContainer, onExport, on
               {accentPresets.map((color) => <button key={color} type="button" aria-label={`使用 ${color} 主题色`} title={color} className={settings.appearance.accentColor === color ? "is-active" : ""} style={{ background: color }} onClick={() => void patch({ appearance: { ...settings.appearance, accentColor: color } })} />)}
             </div>
             <button type="button" className="button button--ghost appearance-reset" onClick={() => void patch({ appearance: { ...settings.appearance, accentColor: null } })}><RotateCcw size={15} />恢复默认</button>
+            <label className="switch appearance-adaptive"><input type="checkbox" checked={settings.appearance.adaptiveAccent} onChange={(event) => void patch({ appearance: { ...settings.appearance, adaptiveAccent: event.target.checked } })} /><span /><em>自适应</em></label>
           </div>
         </section>
         <section className="setting-row setting-row--stack">

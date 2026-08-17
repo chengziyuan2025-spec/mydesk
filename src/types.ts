@@ -11,6 +11,7 @@ export interface BackgroundSettings {
 
 export interface AppearanceSettings {
   accentColor: string | null;
+  adaptiveAccent: boolean;
   background: BackgroundSettings;
 }
 
@@ -46,6 +47,7 @@ export interface ContainerItem {
 
 export type FloatingLayout = "compact" | "grid" | "list";
 export type SnapEdge = "none" | "left" | "right" | "top" | "bottom";
+export type DockSide = "left" | "right";
 
 export interface MonitorInfo {
   key: string;
@@ -69,6 +71,8 @@ export interface ContainerWindowSettings {
   clickThrough: boolean;
   snapEdge: SnapEdge;
   autoHide: boolean;
+  docked: boolean;
+  dockSide: DockSide | null;
   layout: FloatingLayout;
   skipTaskbar: boolean;
   allWorkspaces: boolean;

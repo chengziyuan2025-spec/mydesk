@@ -9,6 +9,7 @@ mod models;
 mod operations;
 mod storage;
 mod watcher;
+mod wallpaper;
 
 use app_state::{DataState, HotkeyRuntime, RuntimeStatus};
 use serde::Serialize;
@@ -177,6 +178,9 @@ pub fn run() {
             commands::list_monitors,
             commands::set_container_window_pinned,
             commands::restore_container_mouse_interaction,
+            commands::reveal_container_window_dock,
+            commands::dock_container_window,
+            commands::get_wallpaper_dominant_color,
             commands::show_quick_launch,
             commands::pick_shortcut_path,
             commands::pick_background_media,

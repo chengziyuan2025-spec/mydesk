@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -38,8 +38,9 @@ export function FloatingContainer({ containerId, onBeforeAdd }: FloatingContaine
   const [externalDragActive, setExternalDragActive] = useState(false);
   const [windowSettings, setWindowSettings] = useState<ContainerWindowSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [autoHidden, setAutoHidden] = useState(false);
   const [allSourcesHidden, setAllSourcesHidden] = useState(false);
+  const dockTimerRef = useRef<number | null>(null);
+  const pointerActiveRef = useRef(false);
   const activeContainerId = platform.currentContainerId() ?? containerId;
   const container = data?.containers.find((item) => item.id === activeContainerId);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -58,6 +59,39 @@ export function FloatingContainer({ containerId, onBeforeAdd }: FloatingContaine
       setWindowSettings(await platform.updateContainerWindowSettings(activeContainerId, next));
     } catch { notify("窗口设置保存失败", "error"); }
   }, [activeContainerId, notify]);
+  const clearDockTimer = useCallback(() => {
+    if (dockTimerRef.current !== null) window.clearTimeout(dockTimerRef.current);
+    dockTimerRef.current = null;
+  }, []);
+  const revealDock = useCallback(() => {
+    clearDockTimer();
+    if (!windowSettings?.autoHide) return;
+    void platform.revealContainerWindowDock(activeContainerId).then(setWindowSettings).catch(() => undefined);
+  }, [activeContainerId, clearDockTimer, windowSettings?.autoHide]);
+  const scheduleDock = useCallback(() => {
+    clearDockTimer();
+    if (pointerActiveRef.current || !windowSettings?.autoHide || !windowSettings.dockSide) return;
+    dockTimerRef.current = window.setTimeout(() => {
+      dockTimerRef.current = null;
+      if (pointerActiveRef.current) return;
+      void platform.dockContainerWindow(activeContainerId).then(setWindowSettings).catch(() => undefined);
+    }, 1_000);
+  }, [activeContainerId, clearDockTimer, windowSettings]);
+
+  useEffect(() => () => clearDockTimer(), [clearDockTimer]);
+  useEffect(() => {
+    const releasePointer = () => {
+      pointerActiveRef.current = false;
+      const shell = document.querySelector<HTMLElement>(".floating-shell");
+      if (shell && !shell.matches(":hover")) scheduleDock();
+    };
+    window.addEventListener("pointerup", releasePointer);
+    window.addEventListener("pointercancel", releasePointer);
+    return () => {
+      window.removeEventListener("pointerup", releasePointer);
+      window.removeEventListener("pointercancel", releasePointer);
+    };
+  }, [scheduleDock]);
 
   const addCandidates = useCallback(async (candidates: ShortcutCandidate[], preparationFailures = 0) => {
     if (!container || (!candidates.length && !preparationFailures)) return;
@@ -228,7 +262,7 @@ export function FloatingContainer({ containerId, onBeforeAdd }: FloatingContaine
   };
 
   return (
-    <main className={`floating-shell ${windowSettings?.collapsed ? "is-collapsed" : ""} ${windowSettings?.locked ? "is-locked" : ""} ${autoHidden ? `is-auto-hidden is-auto-hidden--${windowSettings?.snapEdge}` : ""}`} onMouseEnter={() => autoHidden && setAutoHidden(false)} onMouseLeave={() => { if (windowSettings?.autoHide && windowSettings.snapEdge !== "none") window.setTimeout(() => setAutoHidden(true), 450); }}>
+    <main className={`floating-shell ${windowSettings?.collapsed ? "is-collapsed" : ""} ${windowSettings?.locked ? "is-locked" : ""}`} onMouseEnter={revealDock} onMouseLeave={scheduleDock} onPointerDown={() => { pointerActiveRef.current = true; clearDockTimer(); }} onPointerUp={() => { pointerActiveRef.current = false; }} onPointerCancel={() => { pointerActiveRef.current = false; }}>
       <AppearanceBackdrop settings={data.settings} />
       <header className="floating-titlebar" onMouseDown={startDragging}>
         <div className="floating-titlebar__name"><span aria-hidden="true" />

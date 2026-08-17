@@ -20,7 +20,7 @@ describe("DeskBox operations", () => {
     expect(migrated.version).toBe(5);
     expect(migrated.settings.hotkeys.mainWindow).toBe("Ctrl+Shift+H");
     expect(migrated.externalLauncherEntries).toEqual([]);
-    expect(migrated.settings.appearance).toEqual({ accentColor: null, background: { kind: "none", assetPath: null, assetName: null, overlay: 34 } });
+    expect(migrated.settings.appearance).toEqual({ accentColor: null, adaptiveAccent: false, background: { kind: "none", assetPath: null, assetName: null, overlay: 34 } });
     expect(migrated.containers[0].shortcuts[0]).toMatchObject({ source: "manual", arguments: null, workingDirectory: null });
     expect(migrated.trash[0].kind === "shortcut" && migrated.trash[0].item.source).toBe("manual");
     expect(migrated.trash[1].kind === "container" && migrated.trash[1].item.shortcuts[0].workingDirectory).toBeNull();
@@ -62,9 +62,9 @@ describe("DeskBox operations", () => {
     const data = createDefaultData();
     const next = applyOperation(data, {
       type: "updateSettings",
-      settings: { ...data.settings, appearance: { accentColor: "#2879d0", background: { kind: "image", assetPath: "C:\\assets\\wallpaper.png", assetName: "wallpaper.png", overlay: 48 } } },
+      settings: { ...data.settings, appearance: { accentColor: "#2879d0", adaptiveAccent: true, background: { kind: "image", assetPath: "C:\\assets\\wallpaper.png", assetName: "wallpaper.png", overlay: 48 } } },
     });
-    expect(next.settings.appearance).toEqual({ accentColor: "#2879d0", background: { kind: "image", assetPath: "C:\\assets\\wallpaper.png", assetName: "wallpaper.png", overlay: 48 } });
+    expect(next.settings.appearance).toEqual({ accentColor: "#2879d0", adaptiveAccent: true, background: { kind: "image", assetPath: "C:\\assets\\wallpaper.png", assetName: "wallpaper.png", overlay: 48 } });
   });
 
   it("restores a shortcut into a fallback container", () => {

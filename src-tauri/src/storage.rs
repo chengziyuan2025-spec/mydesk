@@ -361,5 +361,6 @@ mod tests {
         assert_eq!(data.version, 5);
         assert_eq!(data.settings.appearance.background.kind, "none");
         assert_eq!(data.settings.appearance.background.overlay, 34);
+        assert!(!data.settings.appearance.adaptive_accent);
     }
 }

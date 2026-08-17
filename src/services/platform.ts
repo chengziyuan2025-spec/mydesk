@@ -131,8 +131,8 @@ export const platform = {
     if (isTauri()) return invoke<ContainerWindowSettings>("get_container_window_settings", { containerId });
     const key = `deskbox-window-${containerId}`;
     const stored = localStorage.getItem(key);
-    if (stored) { try { return { monitorKey: null, x: 140, y: 120, width: 420, height: 360, collapsed: false, locked: false, opacity: 100, clickThrough: false, snapEdge: "none", autoHide: false, layout: "grid", skipTaskbar: false, allWorkspaces: false, ...JSON.parse(stored) }; } catch { /* use defaults */ } }
-    return { monitorKey: null, x: 140, y: 120, width: 420, height: 360, collapsed: false, locked: false, opacity: 100, clickThrough: false, snapEdge: "none", autoHide: false, layout: "grid", skipTaskbar: false, allWorkspaces: false };
+    if (stored) { try { return { monitorKey: null, x: 140, y: 120, width: 420, height: 360, collapsed: false, locked: false, opacity: 100, clickThrough: false, snapEdge: "none", autoHide: false, docked: false, dockSide: null, layout: "grid", skipTaskbar: false, allWorkspaces: false, ...JSON.parse(stored) }; } catch { /* use defaults */ } }
+    return { monitorKey: null, x: 140, y: 120, width: 420, height: 360, collapsed: false, locked: false, opacity: 100, clickThrough: false, snapEdge: "none", autoHide: false, docked: false, dockSide: null, layout: "grid", skipTaskbar: false, allWorkspaces: false };
   },
   async launchExternalItem(targetType: LaunchTargetType, target: string): Promise<void> {
     if (isTauri()) await invoke("launch_external_item", { targetType, target });
@@ -180,6 +180,17 @@ export const platform = {
     if (isTauri()) return invoke<ContainerWindowSettings>("update_container_window_settings", { containerId, settings });
     localStorage.setItem(`deskbox-window-${containerId}`, JSON.stringify(settings));
     return settings;
+  },
+  async revealContainerWindowDock(containerId: string): Promise<ContainerWindowSettings> {
+    if (isTauri()) return invoke<ContainerWindowSettings>("reveal_container_window_dock", { containerId });
+    return this.getContainerWindowSettings(containerId);
+  },
+  async dockContainerWindow(containerId: string): Promise<ContainerWindowSettings> {
+    if (isTauri()) return invoke<ContainerWindowSettings>("dock_container_window", { containerId });
+    return this.getContainerWindowSettings(containerId);
+  },
+  async getWallpaperDominantColor(): Promise<string | null> {
+    return isTauri() ? invoke<string | null>("get_wallpaper_dominant_color") : null;
   },
   async showAllContainerWindows(): Promise<void> { if (isTauri()) await invoke("show_all_container_windows"); },
   async hideAllContainerWindows(): Promise<void> { if (isTauri()) await invoke("hide_all_container_windows"); },

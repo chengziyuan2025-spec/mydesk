@@ -19,7 +19,7 @@ export const createDefaultData = (): AppData => ({
   }],
   settings: {
     theme: "light",
-    appearance: { accentColor: null, background: { kind: "none", assetPath: null, assetName: null, overlay: 34 } },
+    appearance: { accentColor: null, adaptiveAccent: false, background: { kind: "none", assetPath: null, assetName: null, overlay: 34 } },
     autoCollect: true,
     deleteSource: false,
     defaultContainerId: "sample-container",

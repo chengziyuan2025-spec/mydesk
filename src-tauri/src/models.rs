@@ -128,6 +128,8 @@ pub struct AppearanceSettings {
     #[serde(default)]
     pub accent_color: Option<String>,
     #[serde(default)]
+    pub adaptive_accent: bool,
+    #[serde(default)]
     pub background: BackgroundSettings,
 }
 
@@ -380,7 +382,7 @@ mod tests {
 
     #[test]
     fn sanitizes_invalid_appearance_values() {
-        let mut appearance = AppearanceSettings { accent_color: Some("blue".into()), background: BackgroundSettings { kind: "unknown".into(), asset_path: None, asset_name: Some("old.png".into()), overlay: 100 } };
+        let mut appearance = AppearanceSettings { accent_color: Some("blue".into()), adaptive_accent: false, background: BackgroundSettings { kind: "unknown".into(), asset_path: None, asset_name: Some("old.png".into()), overlay: 100 } };
         sanitize_appearance(&mut appearance);
         assert_eq!(appearance.accent_color, None);
         assert_eq!(appearance.background.kind, "none");

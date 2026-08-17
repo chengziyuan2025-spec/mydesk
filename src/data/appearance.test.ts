@@ -16,9 +16,14 @@ describe("appearance helpers", () => {
   });
 
   it("falls back cleanly when a media reference is incomplete", () => {
-    expect(normalizeAppearanceSettings({ accentColor: "#336699", background: { assetName: "movie.webm", overlay: "50" } })).toEqual({
+    expect(normalizeAppearanceSettings({ accentColor: "#336699", adaptiveAccent: true, background: { assetName: "movie.webm", overlay: "50" } })).toEqual({
       accentColor: "#336699",
+      adaptiveAccent: true,
       background: { kind: "none", assetPath: null, assetName: null, overlay: 50 },
     });
+  });
+
+  it("defaults adaptive accent to disabled for existing v5 records", () => {
+    expect(normalizeAppearanceSettings({ accentColor: "#336699" }).adaptiveAccent).toBe(false);
   });
 });

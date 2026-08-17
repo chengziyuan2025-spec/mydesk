@@ -704,11 +704,6 @@ html[data-appearance="custom"] .toolbar { border-bottom: 1px solid var(--line); 
 .floating-shell.is-collapsed { grid-template-rows: 42px; }
 .floating-shell.is-collapsed .floating-titlebar { border-bottom: 0; }
 .floating-shell.is-locked .floating-titlebar { cursor: default; }
-.floating-shell { transition: transform .24s ease, opacity .18s ease; }
-.floating-shell.is-auto-hidden--left { transform: translateX(calc(-100% + 14px)); }
-.floating-shell.is-auto-hidden--right { transform: translateX(calc(100% - 14px)); }
-.floating-shell.is-auto-hidden--top { transform: translateY(calc(-100% + 14px)); }
-.floating-shell.is-auto-hidden--bottom { transform: translateY(calc(100% - 14px)); }
 .floating-content--compact .floating-shortcut-grid { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 4px; }
 .floating-content--compact .floating-shortcut-grid .shortcut-tile { min-height: 62px; }
 .floating-content--list .floating-shortcut-grid { display: flex; flex-direction: column; gap: 5px; }

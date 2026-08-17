@@ -1,6 +1,6 @@
 use crate::{
     app_state::{DataState, RuntimeStatus},
-    container_windows, icons, launcher,
+    container_windows, icons, launcher, wallpaper,
     models::{AppData, AppOperation, ShortcutInfo},
     operations, storage,
     watcher::WatcherState,
@@ -89,6 +89,21 @@ pub fn set_container_window_pinned(app: AppHandle, container_id: String, pinned:
 
 #[tauri::command]
 pub fn restore_container_mouse_interaction(app: AppHandle) -> Result<(), AppError> { container_windows::restore_mouse_interaction(&app) }
+
+#[tauri::command]
+pub fn reveal_container_window_dock(app: AppHandle, container_id: String) -> Result<container_windows::ContainerWindowSettings, AppError> {
+    container_windows::reveal_dock(&app, &container_id)
+}
+
+#[tauri::command]
+pub fn dock_container_window(app: AppHandle, container_id: String) -> Result<container_windows::ContainerWindowSettings, AppError> {
+    container_windows::dock(&app, &container_id)
+}
+
+#[tauri::command]
+pub fn get_wallpaper_dominant_color() -> Option<String> {
+    wallpaper::dominant_color()
+}
 
 #[tauri::command]
 pub fn show_quick_launch(app: AppHandle) -> Result<(), AppError> {
